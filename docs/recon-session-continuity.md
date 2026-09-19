@@ -1,9 +1,10 @@
-# Recon: session continuity across requests (different session on "continue")
+# Recon: session / project continuity across requests
 
 Empirical check, 2026-09-20, against the **real** free upstream
 (`https://opencode.ai/zen/v1`, model `big-pickle`) through the local proxy.
 Question: request 1 sends session S1, request 2 continues the conversation
 with session S2 — does upstream error, and what happens to caching?
+Extended the same day with the `x-opencode-project` id (§ Project id).
 
 ## Method
 
@@ -49,6 +50,40 @@ session header; read `usage.prompt_tokens_details.cached_tokens`.
    so the upstream sees a stable `x-opencode-session`; with content-keyed
    caching that stability is belt-and-suspenders, not a correctness
    requirement.
+
+## Project id (`x-opencode-project`)
+
+Same rig, header `x-opencode-project` varied alongside/instead of the
+session (`P1`/`P2` native-looking values, the official CLI sends
+`project.id` here — request.ts:190; the proxy forges `global` by default).
+
+| # | Session | Project | Status | cached_tokens | Note |
+|---|---|---|---|---|---|
+| C1 | S1 | P1 | 200 | 256 | stored secret, answered `ok` |
+| C2 | **S2** | **P2** | 200 | 256 | both different — **no error** |
+| C3 | S1 | P1 | 200 | 256 | no recall (stateless, same as §A) |
+| D1 | S1 | P1 | 200 | **512** | shared filler prefix already cached from the earlier session run (~30 min old) |
+| D2 | S1 | P1 | 200 | 512 | |
+| D3 | S1 | **P2** | 200 | **512** | project switch — cache intact |
+| D4 | **S2** | **P2** | 200 | **512** | both switched — cache intact |
+| D5 | *(forged)* | *(proxy default `global`)* | 200 | **512** | |
+| D6 | S1 | *200-char junk* | 200 | **512** | no validation, no error |
+| D7 | S1 | `not-a-project` | 200 | **512** | no validation, no error |
+
+Findings:
+
+1. **The project id is not validated** upstream — arbitrary, overlong and
+   junk values are accepted exactly like real ones (the proxy's `global`
+   default was already evidence of this).
+2. **The prompt cache does not partition by project** either — `cached_tokens`
+   followed the shared content prefix across project switches, across
+   session+project switches, and across a completely forged identity. In D1
+   it even hit a cache entry warmed ~30 minutes earlier by a *different*
+   body sharing only the prefix filler — pure content prefix caching,
+   ~256-token block granularity.
+3. Practical rule: neither `x-opencode-session` nor `x-opencode-project`
+   changes admission, routing correctness, or cacheability. They are
+   labels; only the request content matters upstream.
 
 ## Side observation (upstream model quirk, not session-related)
 
