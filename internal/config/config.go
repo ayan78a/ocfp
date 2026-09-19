@@ -1,0 +1,157 @@
+// Package config holds all runtime constants. Mirrors open-sse/config —
+// values are never hardcoded outside this package.
+package config
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+// Upstream (OpenCode Zen free tier).
+const (
+	UpstreamBase = "https://opencode.ai"
+
+	// Upstream gate (verified live 2026-09-18, see 9router executors/opencode.js):
+	// /zen/v1/chat/completions and /zen/v1/responses with `Authorization: Bearer
+	// public` reject requests that do not look like the official OpenCode
+	// agentic client. stream must be true; tools must include the fingerprint
+	// quartet; User-Agent must look like opencode >= 1.17.
+	ChatCompletionsURL = UpstreamBase + "/zen/v1/chat/completions"
+	ResponsesURL       = UpstreamBase + "/zen/v1/responses"
+	ModelsURL          = UpstreamBase + "/zen/v1/models"
+	PublicBearer       = "public"
+
+	// Free-model selection (mirrors src/app/api/providers/suggested-models/filters.js).
+	// "big-pickle" is free without the -free suffix; deepseek-v4-flash-free
+	// returns "Model is unavailable" upstream (2026-09-02).
+	KnownFreeModels = "big-pickle"
+	DeadFreeModels  = "deepseek-v4-flash-free"
+)
+
+// OpenCode client identity for the free-tier gate.
+const (
+	// Used when the GitHub release lookup fails or the cache is cold.
+	ClientFallbackVersion = "1.18.31"
+	// Upstream rejects User-Agent versions below opencode/1.17.x (426/403).
+	ClientMinMajor    = 1
+	ClientMinMinor    = 17
+	GitHubReleasesURL = "https://api.github.com/repos/anomalyco/opencode/releases/latest"
+	VersionCacheTTL   = 12 * time.Hour
+)
+
+// Muse Spark free models are served by /zen/v1/responses (OpenAI Responses
+// API); every other model stays on /chat/completions. Declared per-model, not
+// per-provider (mirrors providers/registry/opencode.js).
+const ResponsesURLModelsPattern = `(?i)^muse[-_]?spark(?:$|[-_:.\s])`
+
+// forceAutoToolChoiceModels (registry quirks): Muse Spark free models are
+// auto-only upstream — any explicit non-auto tool_choice is rejected with 400
+// (verified live 2026-09-19, decolua/9router#4165). Exact ids only.
+var ForceAutoToolChoiceModels = map[string]bool{
+	"muse-spark-1.2-contributor-free": true,
+	"muse-spark-1.3-contributor-free": true,
+}
+
+// Fingerprint quartet the free-tier gate demands in body.tools.
+var FingerprintTools = []string{"bash", "glob", "grep", "read"}
+
+// Wire limits (Responses API).
+const (
+	MaxToolNameLen     = 128
+	MaxResponsesCallID = 64
+	MaxSessionLength   = 256
+	MinMaxOutputTokens = 16 // upstream 400s below this ("The number must be `>= 16`")
+)
+
+// Timeouts / retries (config/runtimeConfig.js defaults).
+const (
+	ConnectTimeout = 60 * time.Second  // response-headers timeout
+	StreamStall    = 360 * time.Second // max gap between SSE chunks
+	DefaultRatio   = 0.75              // hidden-thinking synthesis share
+	SynthMaxOutput = 10                // below this output, no synthesis
+)
+
+// Retry matrix per upstream status: attempts/delay (default executor rules —
+// note 429 is deliberately NOT retried: the free tier must fail fast).
+type RetryRule struct {
+	Attempts int
+	Delay    time.Duration
+}
+
+var RetryRules = map[int]RetryRule{
+	429: {Attempts: 0, Delay: 0},
+	502: {Attempts: 3, Delay: 3 * time.Second},
+	503: {Attempts: 3, Delay: 2 * time.Second},
+	504: {Attempts: 2, Delay: 3 * time.Second},
+}
+
+// Server defaults.
+const (
+	DefaultPort = "8090"
+)
+
+// Client-facing OpenAI-compatible error typing (config/errorConfig.js).
+type ErrorInfo struct{ Type, Code string }
+
+var ErrorTypes = map[int]ErrorInfo{
+	400: {"invalid_request_error", "bad_request"},
+	401: {"authentication_error", "invalid_api_key"},
+	402: {"billing_error", "payment_required"},
+	403: {"permission_error", "insufficient_quota"},
+	404: {"invalid_request_error", "model_not_found"},
+	406: {"invalid_request_error", "model_not_supported"},
+	429: {"rate_limit_error", "rate_limit_exceeded"},
+	500: {"server_error", "internal_server_error"},
+	502: {"server_error", "bad_gateway"},
+	503: {"server_error", "service_unavailable"},
+	504: {"server_error", "gateway_timeout"},
+}
+
+// DefaultErrorMessages fill in when an error carries no message.
+var DefaultErrorMessages = map[int]string{
+	400: "Bad request",
+	401: "Invalid API key provided",
+	402: "Payment required",
+	403: "You exceeded your current quota",
+	404: "Model not found",
+	406: "Model not supported",
+	429: "Rate limit exceeded",
+	500: "Internal server error",
+	502: "Bad gateway - upstream provider error",
+	503: "Service temporarily unavailable",
+	504: "Gateway timeout",
+}
+
+// FromEnv builds the runtime config from environment variables.
+type Config struct {
+	Port         string
+	APIKey       string // optional inbound API key; empty = no auth
+	UpstreamBase string
+}
+
+func FromEnv() *Config {
+	return &Config{
+		Port:         envOr("PORT", DefaultPort),
+		APIKey:       os.Getenv("OFP_API_KEY"),
+		UpstreamBase: envOr("OFP_UPSTREAM_BASE", UpstreamBase),
+	}
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func envMs(key string, def time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+		return time.Duration(n) * time.Millisecond
+	}
+	return def
+}
