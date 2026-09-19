@@ -16,7 +16,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -45,32 +44,9 @@ func (r *recordingSleeper) recorded() []time.Duration {
 }
 
 func newTestClient(sleeper *recordingSleeper) *Client {
-	c := NewClient(nil)
+	c := NewClient()
 	c.Sleep = sleeper.sleep
 	return c
-}
-
-// NewClient(nil) → direct egress (no Proxy func); a cfg.EgressProxy value is
-// wired into the transport as a CONNECT-tunneling ProxyURL.
-func TestNewClientEgressProxy(t *testing.T) {
-	direct := NewClient(nil)
-	if direct.HTTP.Transport.(*http.Transport).Proxy != nil {
-		t.Error("nil config must leave the transport proxy-free (direct egress)")
-	}
-
-	cfg := &config.Config{EgressProxy: "http://user:pass@proxy.example:3128"}
-	c := NewClient(cfg)
-	tr := c.HTTP.Transport.(*http.Transport)
-	if tr.Proxy == nil {
-		t.Fatal("cfg.EgressProxy must install a transport Proxy")
-	}
-	u, err := tr.Proxy(&http.Request{URL: &url.URL{Scheme: "https", Host: "opencode.ai"}})
-	if err != nil {
-		t.Fatalf("Proxy(req) error = %v", err)
-	}
-	if u == nil || u.Host != "proxy.example:3128" || u.User == nil || u.User.String() != "user:pass" {
-		t.Errorf("Proxy(req) = %v, want http://user:pass@proxy.example:3128", u)
-	}
 }
 
 // TestRetryMatrix ports DEFAULT_RETRY_CONFIG (runtimeConfig.js):

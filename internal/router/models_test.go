@@ -77,7 +77,7 @@ func TestParseUpstreamModels(t *testing.T) {
 func TestHandleModelsFallsBackToStaticRegistry(t *testing.T) {
 	s := &Server{
 		Cfg:      &config.Config{Port: "0", UpstreamBase: "http://127.0.0.1:1"},
-		Upstream: upstream.NewClient(nil),
+		Upstream: upstream.NewClient(),
 		UA:       identity.NewUserAgentCache(),
 	}
 	rec := httptest.NewRecorder()

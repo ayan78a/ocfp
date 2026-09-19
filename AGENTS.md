@@ -78,7 +78,6 @@ every commit. Commit messages follow Conventional Commits (`feat:`, `fix:`,
 | `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
 | `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base, all routes |
 | `OFP_UA_SYNC_INTERVAL` | `3600000` | UA identity sync cadence in ms (background ticker; hot path never fetches) |
-| `OFP_EGRESS_PROXY` | *(empty = direct)* | HTTP(S) CONNECT proxy for all upstream traffic (`upstream.NewClient` wires it into the transport) |
 
 ## Security
 

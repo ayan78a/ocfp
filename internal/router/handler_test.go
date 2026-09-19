@@ -113,7 +113,7 @@ func newScriptedUpstream(t *testing.T, rec *upstreamRecorder, status int, conten
 // sleeps elided and a cold UA cache (Get() is network-free and returns the
 // pinned fallback).
 func newRouter(upstreamURL, apiKey string) (*Server, *http.ServeMux) {
-	c := upstream.NewClient(nil)
+	c := upstream.NewClient()
 	c.Sleep = func(time.Duration) {}
 	s := &Server{
 		Cfg:      &config.Config{Port: "0", APIKey: apiKey, UpstreamBase: upstreamURL},
