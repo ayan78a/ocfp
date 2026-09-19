@@ -53,10 +53,15 @@ func TestHasValidVersion(t *testing.T) {
 	}
 }
 
-// FallbackUA must equal the pinned opencode client version.
+// FallbackUA / BuildUA must render the COMPOUND User-Agent the official CLI
+// sends: opencode/<version> + the pinned ai-sdk/runtime tail (observed live:
+// "opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14").
 func TestFallbackUA(t *testing.T) {
-	if got, want := FallbackUA(), "opencode/1.18.31"; got != want {
+	if got, want := FallbackUA(), "opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"; got != want {
 		t.Errorf("FallbackUA() = %q, want %q", got, want)
+	}
+	if got, want := BuildUA("2.0.1"), "opencode/2.0.1 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"; got != want {
+		t.Errorf("BuildUA(\"2.0.1\") = %q, want %q", got, want)
 	}
 }
 
@@ -188,8 +193,8 @@ func TestUserAgentCacheWarmDeadlockBUG(t *testing.T) {
 	go func() { done <- c.Warm(client) }()
 	select {
 	case ua := <-done:
-		if ua != "opencode/2.0.1" {
-			t.Errorf("Warm() = %q, want %q", ua, "opencode/2.0.1")
+		if ua != BuildUA("2.0.1") {
+			t.Errorf("Warm() = %q, want %q", ua, BuildUA("2.0.1"))
 		}
 	case <-time.After(750 * time.Millisecond):
 		t.Fatal("Warm() deadlocked: useragent.go:90 calls c.Get() while c.mu is held (deferred unlock at :84); JS warmOpencodeUserAgentCache returns \"opencode/2.0.1\"")
@@ -206,11 +211,11 @@ func TestUserAgentCacheWarmCachesLookup(t *testing.T) {
 	})}
 	c := NewUserAgentCache()
 
-	if got := warmOnce(t, c, client); got != "opencode/2.0.1" {
-		t.Errorf("Warm() = %q, want %q", got, "opencode/2.0.1")
+	if got := warmOnce(t, c, client); got != BuildUA("2.0.1") {
+		t.Errorf("Warm() = %q, want %q", got, BuildUA("2.0.1"))
 	}
-	if got := c.Get(); got != "opencode/2.0.1" {
-		t.Errorf("Get() = %q, want cached %q", got, "opencode/2.0.1")
+	if got := c.Get(); got != BuildUA("2.0.1") {
+		t.Errorf("Get() = %q, want cached %q", got, BuildUA("2.0.1"))
 	}
 	warmOnce(t, c, client) // inside the TTL → served from cache
 	if got := calls.Load(); got != 1 {
@@ -258,8 +263,8 @@ func TestUserAgentCacheTTLExpiry(t *testing.T) {
 		t.Errorf("calls just inside TTL = %d, want 1", got)
 	}
 	now = base.Add(config.VersionCacheTTL + time.Minute)
-	if got := warmOnce(t, c, client); got != "opencode/2.0.1" {
-		t.Errorf("Warm() after TTL = %q, want refreshed %q", got, "opencode/2.0.1")
+	if got := warmOnce(t, c, client); got != BuildUA("2.0.1") {
+		t.Errorf("Warm() after TTL = %q, want refreshed %q", got, BuildUA("2.0.1"))
 	}
 	if got := calls.Load(); got != 2 {
 		t.Errorf("calls after TTL expiry = %d, want 2", got)

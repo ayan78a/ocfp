@@ -38,6 +38,13 @@ const (
 	ClientMinMinor    = 17
 	GitHubReleasesURL = "https://api.github.com/repos/anomalyco/opencode/releases/latest"
 	VersionCacheTTL   = 12 * time.Hour
+	// The official CLI ships a COMPOUND User-Agent — observed live
+	// 2026-09-20: `opencode/1.18.31 ai-sdk/provider-utils/4.0.40
+	// runtime/bun/1.3.14`. The proxy mirrors that shape when it has to forge
+	// a UA for non-opencode clients: the opencode version comes from the
+	// GitHub probe, this tail is pinned (dependency/runtime versions are not
+	// part of the releases API payload — refresh alongside releases).
+	UserAgentTail = "ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"
 )
 
 // Muse Spark free models are served by /zen/v1/responses (OpenAI Responses

@@ -32,9 +32,9 @@ func HasValidVersion(ua string) bool {
 }
 
 // UserAgentCache is the fail-open version probe: it keeps the freshest
-// `opencode/<version>` string seen from the GitHub releases API and falls
-// back to the pinned constant when the probe has never succeeded. Errors
-// still advance the cache clock so a broken network doesn't hammer GitHub.
+// opencode version seen from the GitHub releases API and falls back to the
+// pinned constant when the probe has never succeeded. Errors still advance
+// the cache clock so a broken network doesn't hammer GitHub.
 type UserAgentCache struct {
 	mu       sync.Mutex
 	inflight bool
@@ -47,9 +47,16 @@ func NewUserAgentCache() *UserAgentCache {
 	return &UserAgentCache{now: time.Now}
 }
 
+// BuildUA renders the compound User-Agent the official CLI sends
+// (config.UserAgentTail documents the observed shape): the probed (or
+// pinned) opencode version followed by the pinned ai-sdk/runtime tail.
+func BuildUA(version string) string {
+	return "opencode/" + version + " " + config.UserAgentTail
+}
+
 // FallbackUA returns the pinned identity used when the probe is cold.
 func FallbackUA() string {
-	return "opencode/" + config.ClientFallbackVersion
+	return BuildUA(config.ClientFallbackVersion)
 }
 
 // Get returns the current best User-Agent without triggering network I/O.
@@ -91,7 +98,7 @@ func (c *UserAgentCache) Warm(client *http.Client) string {
 // sync.Mutex is not reentrant.)
 func (c *UserAgentCache) uaLocked() string {
 	if c.version != "" {
-		return "opencode/" + c.version
+		return BuildUA(c.version)
 	}
 	return FallbackUA()
 }

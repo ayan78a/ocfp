@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -37,6 +38,11 @@ import (
 
 // testAPIKey is the inbound key the proxy subprocess requires (OFP_API_KEY).
 const testAPIKey = "e2e-secret"
+
+// officialUARe is the compound User-Agent shape the official opencode CLI
+// sends; the forged UA for non-opencode clients must match it.
+var officialUARe = regexp.MustCompile(
+	`^opencode/\d+\.\d+\.\d+ ai-sdk/provider-utils/\d+\.\d+\.\d+ runtime/bun/\d+\.\d+\.\d+$`)
 
 const (
 	fakeChatID   = "chatcmpl-fake0001"
@@ -467,6 +473,21 @@ func toolNames(body map[string]any) map[string]bool {
 
 // ---- tests ----
 
+// TestOfficialUAPassthrough: a client that already sends the exact compound
+// official User-Agent (opencode >= 1.17) has it forwarded byte-identical —
+// the forging path must not rewrite a valid downstream UA.
+func TestOfficialUAPassthrough(t *testing.T) {
+	official := "opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"
+	resp := postChat(t, chatBody(testedModel), setUpstreamUA(t, official))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := fake.upstreamHeader(t, "user-agent"); got != official {
+		t.Fatalf("upstream UA = %q, want byte-identical passthrough of %q", got, official)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	resp := authorizedRequest(t, "GET", "/healthz", nil, nil)
 	defer resp.Body.Close()
@@ -566,6 +587,12 @@ func TestChatNonStreaming(t *testing.T) {
 	}
 	if !strings.Contains(ua, "opencode/") {
 		t.Fatalf("upstream UA = %q, want opencode/*", ua)
+	}
+	// The default client UA is not opencode, so this hit the FORGING path:
+	// it must render the full compound shape the official CLI sends, not a
+	// bare opencode/<version>.
+	if !officialUARe.MatchString(ua) {
+		t.Fatalf("forged upstream UA = %q, want official compound shape opencode/<v> ai-sdk/provider-utils/<v> runtime/bun/<v>", ua)
 	}
 	for _, want := range []string{"bash", "glob", "grep", "read"} {
 		if !toolNames(up)[want] {

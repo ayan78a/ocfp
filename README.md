@@ -57,8 +57,11 @@ upstream and are translated transparently for chat clients.
 8. Executor: session resolution (`x-opencode-*` headers, claude-code /
    antigravity extraction, assistant-text hashing), request transform
    (fingerprint tools, `max_output_tokens` clamp, `store=false`, input
-   normalization), header forging (`Bearer public`, UA version gate ≥ 1.17
-   with pinned fallback, `x-opencode-client/request/project/session`) —
+   normalization), header forging (`Bearer public`, compound opencode
+   User-Agent — the official CLI shape
+   `opencode/<v> ai-sdk/provider-utils/<v> runtime/bun/<v>` — passed through
+   verbatim when the downstream UA is a valid ≥ 1.17 opencode client and
+   forged otherwise, `x-opencode-client/request/project/session`) —
    headers are rebuilt on every retry attempt.
 9. Retry matrix: 429 → no retry; 502 ×3 @3s; 503 ×3 @2s; 504 ×2 @3s;
    network errors follow 502 — one shared attempt budget across all retryable
