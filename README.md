@@ -8,16 +8,16 @@ and non-streaming.
 ## Run
 
 ```sh
-go run ./cmd/server          # PORT=8080 UPSTREAM_BASE=https://opencode.ai by default
+go run ./cmd/server          # listens on :8090, upstream https://opencode.ai
 ```
 
 Environment:
 
 | Var | Default | Meaning |
 |---|---|---|
-| `PORT` | `8080` | Listen port |
-| `UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base |
-| `API_KEY` | *(empty = auth off)* | Bearer key required from clients |
+| `PORT` | `8090` | Listen port |
+| `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base (all routes incl. `/v1/models`) |
+| `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
 
 ## Endpoints
 
@@ -81,13 +81,18 @@ upstream and are translated transparently for chat clients.
 | `internal/upstream` | HTTP client (retry, SSE line scan), executor transforms, headers |
 | `internal/caps` | per-model input-modality resolution (vision/pdf/audio/video) |
 | `internal/router` | endpoints, chatCore pipeline, forced-SSE-to-JSON, bypass/test-connection/modality/tool-dedupe stages |
+| `e2e/` | black-box e2e suite (`-tags e2e`): compiled server subprocess + fake upstream; opt-in live suite |
 
 ## Tests
 
 ```sh
-go test ./...
+go test ./...                # offline unit suite
+go test -tags e2e ./e2e/     # black-box e2e: compiles the server, runs it as a
+                             # subprocess against a fake zen upstream
+E2E_LIVE=1 go test -tags e2e ./e2e/ -run TestLive   # optional: real proxy + real upstream
 ```
 
-Golden vectors are ported from `9router-src/tests/unit/opencode-*.test.js`
+See `e2e/README.md`. Golden unit vectors are ported from
+`9router-src/tests/unit/opencode-*.test.js`
 (session ids, client version gate, tool-choice forcing, max output tokens,
 muse-spark thinking) plus end-to-end httptest coverage of every relay branch.

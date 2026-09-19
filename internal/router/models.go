@@ -20,12 +20,14 @@ type modelsEntry struct {
 // HandleModels is GET /v1/models: fetches the upstream zen model list and
 // filters it to the free tier (src/app/api/providers/suggested-models/
 // filters.js "opencode-free"): ids ending in "-free" (plus big-pickle),
-// minus known-dead ids. Falls back to the static registry models when the
-// upstream list is unreachable.
+// minus known-dead ids. The JS route fetches a caller-supplied `url`; this
+// proxy's equivalent is the configured upstream base (OFP_UPSTREAM_BASE),
+// so the whole list endpoint is redirectable for tests/self-hosting. Falls
+// back to the static registry models when the upstream list is unreachable.
 func (s *Server) HandleModels(w http.ResponseWriter, r *http.Request) {
 	var entries []modelsEntry
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, config.ModelsURL, nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.Cfg.UpstreamBase+"/zen/v1/models", nil)
 	if err == nil {
 		req.Header.Set("Authorization", "Bearer "+config.PublicBearer)
 		if resp, err := client.Do(req); err == nil {

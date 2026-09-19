@@ -6,11 +6,11 @@ package router
 //
 // NOTE on wiring: the JS route fetches a caller-supplied `url` and returns
 // {data: []} when the fetch fails; the Go proxy serves /v1/models directly and
-// hardcodes config.ModelsURL (https://opencode.ai/zen/v1/models) — so the
-// happy path cannot be redirected to a test server. The happy-path FILTER
-// logic is therefore unit-tested through parseUpstreamModels, and the handler
-// test exercises only the fallback (the sandbox has no egress, so the fetch
-// fails and the static registry list is served).
+// derives the URL from the configured upstream base (s.Cfg.UpstreamBase +
+// "/zen/v1/models"), so the happy path is redirectable like the JS route. The
+// FILTER logic is unit-tested through parseUpstreamModels; the handler test
+// below exercises the fallback (unreachable base), and e2e/models via the
+// e2e tag exercises the happy path against a fake upstream.
 
 import (
 	"encoding/json"
@@ -72,8 +72,8 @@ func TestParseUpstreamModels(t *testing.T) {
 
 // TestHandleModelsFallsBackToStaticRegistry: when the upstream model list is
 // unreachable the static registry models are served (registry/opencode.js
-// models + the known-free id). Egress is blocked in the sandbox, so the
-// hardcoded config.ModelsURL fetch fails and the fallback kicks in.
+// models + the known-free id). The test's upstream base is a closed port, so
+// the fetch fails and the fallback kicks in.
 func TestHandleModelsFallsBackToStaticRegistry(t *testing.T) {
 	s := &Server{
 		Cfg:      &config.Config{Port: "0", UpstreamBase: "http://127.0.0.1:1"},
