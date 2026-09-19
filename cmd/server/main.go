@@ -35,7 +35,7 @@ func main() {
 
 	server := &router.Server{
 		Cfg:      cfg,
-		Upstream: upstream.NewClient(),
+		Upstream: upstream.NewClient(cfg),
 		UA:       uaCache,
 	}
 

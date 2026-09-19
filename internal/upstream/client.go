@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,14 +29,24 @@ type Client struct {
 
 // NewClient wires an http.Client whose response-header wait is the connect
 // timeout (FETCH_CONNECT_TIMEOUT_MS semantics: time to first response byte
-// headers; the SSE body itself streams unbounded).
-func NewClient() *Client {
+// headers; the SSE body itself streams unbounded). A non-empty
+// cfg.EgressProxy routes ALL upstream traffic through that HTTP(S) proxy
+// (CONNECT tunneling); the UA identity sync rides the same client.
+func NewClient(cfg *config.Config) *Client {
+	transport := &http.Transport{
+		ResponseHeaderTimeout: config.ConnectTimeout,
+		ForceAttemptHTTP2:     true,
+	}
+	if cfg != nil && cfg.EgressProxy != "" {
+		u, err := url.Parse(cfg.EgressProxy)
+		if err != nil {
+			panic("upstream: invalid OFP_EGRESS_PROXY: " + err.Error())
+		}
+		transport.Proxy = http.ProxyURL(u)
+	}
 	return &Client{
 		HTTP: &http.Client{
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: config.ConnectTimeout,
-				ForceAttemptHTTP2:     true,
-			},
+			Transport: transport,
 		},
 		Sleep: time.Sleep,
 		Now:   time.Now,

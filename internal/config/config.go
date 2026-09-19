@@ -163,6 +163,9 @@ type Config struct {
 	APIKey         string // optional inbound API key; empty = no auth
 	UpstreamBase   string
 	UASyncInterval time.Duration
+	// EgressProxy routes all upstream + identity-sync traffic through an
+	// HTTP(S) proxy (CONNECT). Empty = direct egress.
+	EgressProxy string
 }
 
 func FromEnv() *Config {
@@ -171,6 +174,7 @@ func FromEnv() *Config {
 		APIKey:         os.Getenv("OFP_API_KEY"),
 		UpstreamBase:   envOr("OFP_UPSTREAM_BASE", UpstreamBase),
 		UASyncInterval: envMs("OFP_UA_SYNC_INTERVAL", UASyncInterval),
+		EgressProxy:    os.Getenv("OFP_EGRESS_PROXY"),
 	}
 }
 

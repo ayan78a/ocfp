@@ -19,6 +19,7 @@ Environment:
 | `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base (all routes incl. `/v1/models`) |
 | `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
 | `OFP_UA_SYNC_INTERVAL` | `3600000` (1h) | UA identity sync cadence (ms) — see docs/recon-opencode-ua.md |
+| `OFP_EGRESS_PROXY` | *(empty = direct)* | HTTP(S) proxy (CONNECT) for all upstream + identity-sync traffic |
 
 ## Endpoints
 
