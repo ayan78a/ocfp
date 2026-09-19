@@ -477,7 +477,8 @@ func toolNames(body map[string]any) map[string]bool {
 // official User-Agent (opencode >= 1.17) has it forwarded byte-identical —
 // the forging path must not rewrite a valid downstream UA.
 func TestOfficialUAPassthrough(t *testing.T) {
-	official := "opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"
+	// Captured from the official v1.18.31 binary (docs/recon-opencode-ua.md).
+	official := "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
 	resp := postChat(t, chatBody(testedModel), setUpstreamUA(t, official))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

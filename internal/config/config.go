@@ -38,13 +38,40 @@ const (
 	ClientMinMinor    = 17
 	GitHubReleasesURL = "https://api.github.com/repos/anomalyco/opencode/releases/latest"
 	VersionCacheTTL   = 12 * time.Hour
-	// The official CLI ships a COMPOUND User-Agent — observed live
-	// 2026-09-20: `opencode/1.18.31 ai-sdk/provider-utils/4.0.40
-	// runtime/bun/1.3.14`. The proxy mirrors that shape when it has to forge
-	// a UA for non-opencode clients: the opencode version comes from the
-	// GitHub probe, this tail is pinned (dependency/runtime versions are not
-	// part of the releases API payload — refresh alongside releases).
-	UserAgentTail = "ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"
+
+	// The official CLI ships a COMPOUND User-Agent built from three distinct
+	// versions (full source trace in docs/recon-opencode-ua.md):
+	//
+	//	opencode/<v> ai-sdk/provider-utils/<p> runtime/bun/<b>
+	//
+	//   - <v>: the release version (GitHub releases API probe).
+	//   - <p>: @ai-sdk/provider-utils as resolved for packages/opencode's
+	//     @ai-sdk/openai-compatible dependency — the package whose fetch
+	//     actually stamps the suffix (session/llm/request.ts:18,187-204 build
+	//     `opencode/<v>`; provider-utils' postJsonToApi appends
+	//     `ai-sdk/provider-utils/<p> runtime/bun/<b>`). Captured live from the
+	//     official v1.18.31 binary 2026-09-20: 4.0.23.
+	//   - <b>: the Bun build runtime = root package.json `packageManager`
+	//     pin at the same tag (1.3.14).
+	//
+	// These three constants are the compiled-in DEFAULT triple (the chosen
+	// tag); identity.UserAgentCache replaces every segment at runtime from
+	// the sync probe (raw.githubusercontent.com at the probed tag + bun.lock
+	// resolution), so a new opencode release flows through without a rebuild.
+	ClientFallbackProviderUtils = "4.0.23"
+	ClientFallbackBun           = "1.3.14"
+
+	// UA sync sources at the probed tag (see docs/recon-opencode-ua.md).
+	GitHubRawBase       = "https://raw.githubusercontent.com/anomalyco/opencode"
+	RootPackageJSONPath = "package.json"
+	LockfilePath        = "bun.lock"
+
+	// UASyncInterval is the background sync cadence for the UA triple. The
+	// request hot path NEVER triggers a fetch (documented divergence from
+	// opencodeClientVersion.js lazy warm — the ticker keeps the cache at
+	// most one interval stale instead). Override with OFP_UA_SYNC_INTERVAL
+	// (milliseconds).
+	UASyncInterval = time.Hour
 )
 
 // Muse Spark free models are served by /zen/v1/responses (OpenAI Responses
@@ -132,16 +159,18 @@ var DefaultErrorMessages = map[int]string{
 
 // FromEnv builds the runtime config from environment variables.
 type Config struct {
-	Port         string
-	APIKey       string // optional inbound API key; empty = no auth
-	UpstreamBase string
+	Port           string
+	APIKey         string // optional inbound API key; empty = no auth
+	UpstreamBase   string
+	UASyncInterval time.Duration
 }
 
 func FromEnv() *Config {
 	return &Config{
-		Port:         envOr("PORT", DefaultPort),
-		APIKey:       os.Getenv("OFP_API_KEY"),
-		UpstreamBase: envOr("OFP_UPSTREAM_BASE", UpstreamBase),
+		Port:           envOr("PORT", DefaultPort),
+		APIKey:         os.Getenv("OFP_API_KEY"),
+		UpstreamBase:   envOr("OFP_UPSTREAM_BASE", UpstreamBase),
+		UASyncInterval: envMs("OFP_UA_SYNC_INTERVAL", UASyncInterval),
 	}
 }
 

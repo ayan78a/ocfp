@@ -18,6 +18,7 @@ Environment:
 | `PORT` | `8090` | Listen port |
 | `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base (all routes incl. `/v1/models`) |
 | `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
+| `OFP_UA_SYNC_INTERVAL` | `3600000` (1h) | UA identity sync cadence (ms) — see docs/recon-opencode-ua.md |
 
 ## Endpoints
 
@@ -59,7 +60,9 @@ upstream and are translated transparently for chat clients.
    (fingerprint tools, `max_output_tokens` clamp, `store=false`, input
    normalization), header forging (`Bearer public`, compound opencode
    User-Agent — the official CLI shape
-   `opencode/<v> ai-sdk/provider-utils/<v> runtime/bun/<v>` — passed through
+   `opencode/<v> ai-sdk/provider-utils/<v> runtime/bun/<v>`, all three
+   versions synced from GitHub (startup + hourly ticker, hot path is a pure
+   cache read; [recon](docs/recon-opencode-ua.md)) — passed through
    verbatim when the downstream UA is a valid ≥ 1.17 opencode client and
    forged otherwise, `x-opencode-client/request/project/session`) —
    headers are rebuilt on every retry attempt.
@@ -76,7 +79,7 @@ upstream and are translated transparently for chat clients.
 
 | Package | Ports |
 |---|---|
-| `internal/identity` | session/request-id generation, UA cache, session resolution chain |
+| `internal/identity` | session/request-id generation, UA triple cache + GitHub sync, session resolution chain |
 | `internal/cloak` | thinking suffix parse/apply, model id/URL, fingerprint tools, responses sanitization |
 | `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms |
 | `internal/relay` | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam |

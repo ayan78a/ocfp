@@ -39,12 +39,17 @@ func main() {
 		UA:       uaCache,
 	}
 
-	// Warm the opencode UA cache in the background; requests before the
-	// GitHub probe completes use the pinned fallback (fail-open).
+	// Sync the compound UA triple (opencode version, ai-sdk provider-utils,
+	// bun) from GitHub: one forced warm at startup, then a background ticker
+	// every cfg.UASyncInterval. The request path is a pure cache read
+	// (identity.UserAgentCache documents the divergence from 9router's lazy
+	// per-request warm); requests before the first successful sync use the
+	// compiled-in default triple (fail-open).
 	go func() {
-		ua := uaCache.Warm(server.Upstream.HTTP)
+		ua := uaCache.Warm(server.Upstream.HTTP, true)
 		log.Printf("opencode UA cache warm: %s", ua)
 	}()
+	uaCache.StartSync(server.Upstream.HTTP, cfg.UASyncInterval)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", server.HandleChatCompletions)

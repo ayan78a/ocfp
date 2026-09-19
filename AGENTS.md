@@ -40,7 +40,7 @@ every commit. Commit messages follow Conventional Commits (`feat:`, `fix:`,
 | `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms, modality strip |
 | `internal/upstream` | HTTP client (retry matrix, SSE line scan), executor transforms, header forging |
 | `internal/cloak` | thinking suffix parse/apply, model id/URL, fingerprint tools |
-| `internal/identity` | session/request ids, opencode UA cache (GitHub probe, fail-open) |
+| `internal/identity` | session/request ids, opencode UA triple cache + GitHub sync loop (fail-open), session resolution chain |
 | `internal/caps` | per-model input-modality resolution (exact table → glob patterns → name heuristic) |
 | `internal/usage` | usage normalization/merge/estimation/thinking synthesis |
 | `internal/jsonx` | JS-semantics JSON accessors (`AsStr`/`AsArr`/`Truthy`/…) |
@@ -77,6 +77,7 @@ every commit. Commit messages follow Conventional Commits (`feat:`, `fix:`,
 | `PORT` | `8090` | Listen port (`0` valid in tests) |
 | `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
 | `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base, all routes |
+| `OFP_UA_SYNC_INTERVAL` | `3600000` | UA identity sync cadence in ms (background ticker; hot path never fetches) |
 
 ## Security
 

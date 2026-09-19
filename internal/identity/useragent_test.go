@@ -1,7 +1,9 @@
-// User-Agent gate + GitHub release probe tests — ported from 9router
+// User-Agent gate + compound-UA triple sync tests — ported from 9router
 // tests/unit/opencode-client-version.test.js and
 // open-sse/executors/opencode.js hasValidOpencodeVersion /
-// open-sse/utils/opencodeClientVersion.js.
+// open-sse/utils/opencodeClientVersion.js (extended for the full
+// opencode + provider-utils + bun triple synced from GitHub, see
+// docs/recon-opencode-ua.md).
 package identity
 
 import (
@@ -10,7 +12,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func TestHasValidVersion(t *testing.T) {
 		{"Mozilla/5.0", false, "non-opencode UA"},
 		{"Claude-Code/1.0", false, "other client"},
 		{"OpenCode/1.19.0", true, "case-insensitive product token"},
-		{"opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14", true, "golden full opencode UA"},
+		{"opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14", true, "golden full opencode UA"},
 		{"Mozilla/5.0 (Macintosh) opencode/1.18.0 something", true, "regex is unanchored"},
 		{"xopencode/9.9.9", true, "JS regex has no word boundary before opencode"},
 		{"opencode/1", false, "minor segment missing → no match"},
@@ -53,15 +54,19 @@ func TestHasValidVersion(t *testing.T) {
 	}
 }
 
-// FallbackUA / BuildUA must render the COMPOUND User-Agent the official CLI
-// sends: opencode/<version> + the pinned ai-sdk/runtime tail (observed live:
-// "opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14").
+// The compiled-in default triple must match the official CLI byte for byte
+// (captured live from the v1.18.31 binary, docs/recon-opencode-ua.md):
+// "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14".
 func TestFallbackUA(t *testing.T) {
-	if got, want := FallbackUA(), "opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"; got != want {
+	want := "opencode/1.18.31 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
+	if got := FallbackUA(); got != want {
 		t.Errorf("FallbackUA() = %q, want %q", got, want)
 	}
-	if got, want := BuildUA("2.0.1"), "opencode/2.0.1 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14"; got != want {
-		t.Errorf("BuildUA(\"2.0.1\") = %q, want %q", got, want)
+	if got := FallbackTriple().Compose(); got != want {
+		t.Errorf("FallbackTriple().Compose() = %q, want %q", got, want)
+	}
+	if got := BuildUA(UATriple{Opencode: "2.0.1", ProviderUtils: "5.5.5", Bun: "9.9.9"}); got != "opencode/2.0.1 ai-sdk/provider-utils/5.5.5 runtime/bun/9.9.9" {
+		t.Errorf("BuildUA(triple) = %q", got)
 	}
 }
 
@@ -75,6 +80,292 @@ func jsonResponse(status int, body string) *http.Response {
 		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+}
+
+// syncStub fixtures: the three sources a Warm fetches for opencode/2.0.1.
+const (
+	stubLock = `{
+  "packages": {
+    "@ai-sdk/openai-compatible": ["@ai-sdk/openai-compatible@2.0.41", "", { "dependencies": { "@ai-sdk/provider-utils": "4.0.21" } }, "x"],
+    "opencode/@ai-sdk/openai-compatible/@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@5.5.5", "", { "dependencies": {} }, "y"],
+    "opencode/@ai-sdk/openai/@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@7.7.7", "", { "dependencies": {} }, "z"]
+  }
+}`
+	stubPkgJSON = `{"name":"opencode","packageManager":"bun@9.9.9+sha512.abcdef"}`
+)
+
+// stubLockRenamed is the same shape without the exact "opencode/" workspace
+// prefix — the puReAny fallback must still resolve the openai-compatible copy.
+var stubLockRenamed = strings.Replace(stubLock,
+	"opencode/@ai-sdk/openai-compatible/@ai-sdk/provider-utils",
+	"cli/@ai-sdk/openai-compatible/@ai-sdk/provider-utils", 1)
+
+// uaSyncTransport serves the releases API + raw tag files. Handlers are
+// swappable per-test to drive failure modes.
+type uaSyncTransport struct {
+	mu         sync.Mutex
+	release    string // body for the releases API
+	pkgJSON    string
+	lock       string
+	pkgStatus  int
+	lockStatus int
+	requests   []string
+}
+
+func newUASyncTransport() *uaSyncTransport {
+	return &uaSyncTransport{
+		release:    `{"tag_name":"v2.0.1"}`,
+		pkgJSON:    stubPkgJSON,
+		lock:       stubLock,
+		pkgStatus:  http.StatusOK,
+		lockStatus: http.StatusOK,
+	}
+}
+
+func (s *uaSyncTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requests = append(s.requests, r.URL.String())
+	switch r.URL.Host {
+	case "api.github.com":
+		return jsonResponse(http.StatusOK, s.release), nil
+	default: // raw.githubusercontent.com
+		if strings.HasSuffix(r.URL.Path, "/package.json") {
+			return jsonResponse(s.pkgStatus, s.pkgJSON), nil
+		}
+		return jsonResponse(s.lockStatus, s.lock), nil
+	}
+}
+
+func (s *uaSyncTransport) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.requests)
+}
+
+const stubUA = "opencode/2.0.1 ai-sdk/provider-utils/5.5.5 runtime/bun/9.9.9"
+
+// The full sync chain resolves all three segments from the right URLs.
+func TestWarmFetchesFullTriple(t *testing.T) {
+	tr := newUASyncTransport()
+	client := &http.Client{Transport: tr}
+	c := NewUserAgentCache()
+
+	if got := c.Warm(client, true); got != stubUA {
+		t.Errorf("Warm() = %q, want %q", got, stubUA)
+	}
+	if got := c.Get(); got != stubUA {
+		t.Errorf("Get() = %q, want cached %q", got, stubUA)
+	}
+	wantURLs := []string{
+		config.GitHubReleasesURL,
+		config.GitHubRawBase + "/v2.0.1/" + config.RootPackageJSONPath,
+		config.GitHubRawBase + "/v2.0.1/" + config.LockfilePath,
+	}
+	if tr.calls() != len(wantURLs) {
+		t.Fatalf("requests = %v, want exactly %v", tr.requests, wantURLs)
+	}
+	for i, want := range wantURLs {
+		if tr.requests[i] != want {
+			t.Errorf("request[%d] = %q, want %q", i, tr.requests[i], want)
+		}
+	}
+}
+
+// Extraction units: the exact bun.lock key wins over the @ai-sdk/openai copy;
+// a renamed workspace falls back to any openai-compatible-scoped resolution;
+// the packageManager pin tolerates a +sha512 suffix; malformed inputs error.
+func TestUASourceExtraction(t *testing.T) {
+	if m := puReExact.FindStringSubmatch(stubLock); m == nil || m[1] != "5.5.5" {
+		t.Errorf("puReExact on stub lock = %v, want 5.5.5", m)
+	}
+	if m := puReExact.FindStringSubmatch(stubLockRenamed); m != nil {
+		t.Errorf("puReExact must not match a renamed workspace, got %v", m)
+	}
+	if m := puReAny.FindStringSubmatch(stubLockRenamed); m == nil || m[1] != "5.5.5" {
+		t.Errorf("puReAny on renamed lock = %v, want 5.5.5", m)
+	}
+	if m := packageManagerRe.FindStringSubmatch(stubPkgJSON); m == nil || m[1] != "9.9.9" {
+		t.Errorf("packageManagerRe = %v, want 9.9.9", m)
+	}
+	if m := packageManagerRe.FindStringSubmatch(`{"packageManager": "bun@1.3.14"}`); m == nil || m[1] != "1.3.14" {
+		t.Errorf("packageManagerRe (no hash) = %v, want 1.3.14", m)
+	}
+	if packageManagerRe.FindStringSubmatch(`{"packageManager":"pnpm@9.0.0"}`) != nil {
+		t.Error("packageManagerRe must reject non-bun pins")
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"no":"pin"}`), nil
+	})}
+	if _, err := fetchBunVersion(client, "2.0.1"); err == nil {
+		t.Error("package.json without a bun pin must error")
+	}
+	client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"packages":{}}`), nil
+	})}
+	if _, err := fetchProviderUtilsVersion(client, "2.0.1"); err == nil {
+		t.Error("bun.lock without the chain must error")
+	}
+}
+
+// All-or-nothing: a failure in ANY segment keeps the previously cached triple
+// intact — never a mix of old and new versions across releases.
+func TestWarmAllOrNothing(t *testing.T) {
+	tr := newUASyncTransport()
+	client := &http.Client{Transport: tr}
+	c := NewUserAgentCache()
+	c.Warm(client, true)
+
+	// New release resolves, but bun.lock fails → the old triple must stay.
+	tr.mu.Lock()
+	tr.release = `{"tag_name":"v3.0.0"}`
+	tr.lockStatus = http.StatusInternalServerError
+	tr.mu.Unlock()
+	if got := c.Warm(client, true); got != stubUA {
+		t.Errorf("Warm() with broken lock = %q, want previous %q", got, stubUA)
+	}
+
+	// Recovered sync picks up the new release end to end.
+	tr.mu.Lock()
+	tr.lockStatus = http.StatusOK
+	tr.pkgJSON = strings.Replace(stubPkgJSON, "9.9.9", "10.0.0", 1)
+	tr.lock = strings.Replace(stubLock, "5.5.5", "6.0.0", 1)
+	tr.mu.Unlock()
+	want := "opencode/3.0.0 ai-sdk/provider-utils/6.0.0 runtime/bun/10.0.0"
+	if got := c.Warm(client, true); got != want {
+		t.Errorf("Warm() after recovery = %q, want %q", got, want)
+	}
+}
+
+// Cold + failing → the compiled-in fallback (fail-open).
+func TestWarmFailsOpenCold(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusServiceUnavailable, "nope"), nil
+	})}
+	c := NewUserAgentCache()
+	if got := c.Warm(client, true); got != FallbackUA() {
+		t.Errorf("Warm() on 503 = %q, want fallback %q", got, FallbackUA())
+	}
+	if got := c.Get(); got != FallbackUA() {
+		t.Errorf("Get() after failure = %q, want fallback %q", got, FallbackUA())
+	}
+}
+
+// Non-forced Warm throttles inside the TTL to zero source calls; force
+// bypasses the TTL (the sync ticker relies on that).
+func TestWarmTTLAndForce(t *testing.T) {
+	tr := newUASyncTransport()
+	client := &http.Client{Transport: tr}
+	c := NewUserAgentCache()
+	base := time.Now()
+	now := base
+	c.now = func() time.Time { return now }
+
+	c.Warm(client, false)
+	if got := tr.calls(); got != 3 {
+		t.Fatalf("first warm requests = %d, want 3 (release + package.json + bun.lock)", got)
+	}
+	now = base.Add(config.VersionCacheTTL - time.Minute)
+	c.Warm(client, false)
+	if got := tr.calls(); got != 3 {
+		t.Errorf("warm inside TTL requests = %d, want 3 (throttled)", got)
+	}
+	now = base.Add(config.VersionCacheTTL + time.Minute)
+	if got := c.Warm(client, false); got != stubUA {
+		t.Errorf("Warm() after TTL = %q, want %q", got, stubUA)
+	}
+	if got := tr.calls(); got != 6 {
+		t.Errorf("post-TTL requests = %d, want 6", got)
+	}
+	c.Warm(client, true) // force: inside nothing, refreshes immediately
+	if got := tr.calls(); got != 9 {
+		t.Errorf("forced warm requests = %d, want 9", got)
+	}
+}
+
+// Concurrent warms are deduplicated (single-flight): exactly one source pass.
+func TestWarmSingleFlight(t *testing.T) {
+	release := make(chan struct{})
+	tr := newUASyncTransport()
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-release // hold every probe open so the others must hit the inflight gate
+		return tr.RoundTrip(r)
+	})}
+	c := NewUserAgentCache()
+
+	var wg sync.WaitGroup
+	results := make([]string, 5)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = c.Warm(client, true)
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond) // let every goroutine reach Warm
+	close(release)
+	wg.Wait()
+
+	if got := tr.calls(); got != 3 {
+		t.Errorf("source requests = %d, want 3 (one full pass)", got)
+	}
+	// Waiters behind the inflight gate return immediately (fail-open): the
+	// cold-cache fallback. Exactly one goroutine — the winner — returns the
+	// synced triple. Get() must serve the synced triple afterwards.
+	synced := 0
+	for i, r := range results {
+		switch r {
+		case stubUA:
+			synced++
+		case FallbackUA():
+		default:
+			t.Errorf("Warm() goroutine %d = %q, want %q or %q", i, r, stubUA, FallbackUA())
+		}
+	}
+	if synced != 1 {
+		t.Errorf("synced results = %d, want exactly 1 (single-flight winner)", synced)
+	}
+	if got := c.Get(); got != stubUA {
+		t.Errorf("Get() after the sync pass = %q, want %q", got, stubUA)
+	}
+}
+
+// Warm must never deadlock the cache mutex (regression: the old version
+// called c.Get() while holding c.mu on the inflight path).
+func TestWarmNoDeadlock(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"tag_name":"v2.0.1"}`), nil
+	})}
+	c := NewUserAgentCache()
+	done := make(chan string, 1)
+	go func() { done <- c.Warm(client, true) }()
+	select {
+	case <-done:
+	case <-time.After(750 * time.Millisecond):
+		t.Fatal("Warm() deadlocked")
+	}
+}
+
+// The background ticker syncs repeatedly until stopped.
+func TestStartSyncTicker(t *testing.T) {
+	tr := newUASyncTransport()
+	client := &http.Client{Transport: tr}
+	c := NewUserAgentCache()
+
+	stop := c.StartSync(client, 25*time.Millisecond)
+	deadline := time.After(2 * time.Second)
+	for tr.calls() < 6 { // ≥2 full sync passes
+		select {
+		case <-deadline:
+			t.Fatalf("sync ticker stalled after %d requests", tr.calls())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	stop()
+	time.Sleep(60 * time.Millisecond)
+	if got := c.Get(); got != stubUA {
+		t.Errorf("Get() after sync = %q, want %q", got, stubUA)
 	}
 }
 
@@ -149,166 +440,9 @@ func TestFetchLatestReleaseFailureModes(t *testing.T) {
 	}
 }
 
-// warmWithTimeout runs Warm on a goroutine and reports whether it returned at
-// all — Warm currently deadlocks on the fetch path (see
-// TestUserAgentCacheWarmDeadlockBUG), and a blocked Warm must not hang the
-// whole suite.
-func warmWithTimeout(c *UserAgentCache, client *http.Client) (string, bool) {
-	done := make(chan string, 1)
-	go func() { done <- c.Warm(client) }()
-	select {
-	case ua := <-done:
-		return ua, true
-	case <-time.After(750 * time.Millisecond):
-		return "", false
-	}
-}
-
-// warmOnce skips the test when the Warm deadlock is still present; the
-// behavioral assertions below activate automatically once it is fixed.
-func warmOnce(t *testing.T, c *UserAgentCache, client *http.Client) string {
-	t.Helper()
-	ua, ok := warmWithTimeout(c, client)
-	if !ok {
-		t.Skip("Warm() deadlocks (internal/identity/useragent.go:90 calls c.Get() while holding c.mu) — see TestUserAgentCacheWarmDeadlockBUG")
-	}
-	return ua
-}
-
-// PARITY/IMPLEMENTATION BUG repro (expected to FAIL — see task report):
-// internal/identity/useragent.go:90 ends Warm with `return c.Get()` while the
-// mutex grabbed at :83 is still held (deferred unlock). sync.Mutex is not
-// reentrant, so EVERY Warm that reaches the fetch phase deadlocks. In the live
-// server the startup warm (cmd/server/main.go:30) blocks forever holding c.mu,
-// and the first request that reads the UA (internal/router/handler.go:173,
-// s.UA.Get()) then hangs too. JS has no equivalent hazard —
-// warmOpencodeUserAgentCache resolves to "opencode/<version>".
-func TestUserAgentCacheWarmDeadlockBUG(t *testing.T) {
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{"tag_name":"v2.0.1"}`), nil
-	})}
-	c := NewUserAgentCache()
-
-	done := make(chan string, 1)
-	go func() { done <- c.Warm(client) }()
-	select {
-	case ua := <-done:
-		if ua != BuildUA("2.0.1") {
-			t.Errorf("Warm() = %q, want %q", ua, BuildUA("2.0.1"))
-		}
-	case <-time.After(750 * time.Millisecond):
-		t.Fatal("Warm() deadlocked: useragent.go:90 calls c.Get() while c.mu is held (deferred unlock at :84); JS warmOpencodeUserAgentCache returns \"opencode/2.0.1\"")
-	}
-}
-
-// Golden: caches a successful GitHub release lookup and throttles the second
-// warm inside the TTL to zero extra calls.
-func TestUserAgentCacheWarmCachesLookup(t *testing.T) {
-	var calls atomic.Int64
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		calls.Add(1)
-		return jsonResponse(http.StatusOK, `{"tag_name":"v2.0.1"}`), nil
-	})}
-	c := NewUserAgentCache()
-
-	if got := warmOnce(t, c, client); got != BuildUA("2.0.1") {
-		t.Errorf("Warm() = %q, want %q", got, BuildUA("2.0.1"))
-	}
-	if got := c.Get(); got != BuildUA("2.0.1") {
-		t.Errorf("Get() = %q, want cached %q", got, BuildUA("2.0.1"))
-	}
-	warmOnce(t, c, client) // inside the TTL → served from cache
-	if got := calls.Load(); got != 1 {
-		t.Errorf("GitHub calls = %d, want 1 (second warm must be TTL-throttled)", got)
-	}
-}
-
 // Get before any warm returns the pinned fallback (cold cache).
 func TestUserAgentCacheColdGet(t *testing.T) {
 	if got := NewUserAgentCache().Get(); got != FallbackUA() {
 		t.Errorf("cold Get() = %q, want %q", got, FallbackUA())
-	}
-}
-
-// Golden: falls back when the GitHub lookup fails.
-func TestUserAgentCacheWarmFailsOpen(t *testing.T) {
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusServiceUnavailable, "nope"), nil
-	})}
-	c := NewUserAgentCache()
-	if got := warmOnce(t, c, client); got != FallbackUA() {
-		t.Errorf("Warm() on 503 = %q, want fallback %q", got, FallbackUA())
-	}
-	if got := c.Get(); got != FallbackUA() {
-		t.Errorf("Get() after failure = %q, want fallback %q", got, FallbackUA())
-	}
-}
-
-// A successful cache entry expires after the 12h TTL and is refreshed.
-func TestUserAgentCacheTTLExpiry(t *testing.T) {
-	var calls atomic.Int64
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		calls.Add(1)
-		return jsonResponse(http.StatusOK, `{"tag_name":"v2.0.1"}`), nil
-	})}
-	c := NewUserAgentCache()
-	base := time.Now()
-	now := base
-	c.now = func() time.Time { return now }
-
-	warmOnce(t, c, client)
-	now = base.Add(config.VersionCacheTTL - time.Minute)
-	warmOnce(t, c, client)
-	if got := calls.Load(); got != 1 {
-		t.Errorf("calls just inside TTL = %d, want 1", got)
-	}
-	now = base.Add(config.VersionCacheTTL + time.Minute)
-	if got := warmOnce(t, c, client); got != BuildUA("2.0.1") {
-		t.Errorf("Warm() after TTL = %q, want refreshed %q", got, BuildUA("2.0.1"))
-	}
-	if got := calls.Load(); got != 2 {
-		t.Errorf("calls after TTL expiry = %d, want 2", got)
-	}
-}
-
-// Concurrent warms are deduplicated (single-flight): exactly one GitHub call.
-func TestUserAgentCacheSingleFlight(t *testing.T) {
-	// Skip while the Warm deadlock is present: a deadlocked warm holds c.mu
-	// forever and this test's goroutines would hang behind it.
-	if _, ok := warmWithTimeout(NewUserAgentCache(), &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(http.StatusOK, `{"tag_name":"v2.0.1"}`), nil
-	})}); !ok {
-		t.Skip("Warm() deadlocks (internal/identity/useragent.go:90 calls c.Get() while holding c.mu) — see TestUserAgentCacheWarmDeadlockBUG")
-	}
-
-	release := make(chan struct{})
-	var calls atomic.Int64
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		calls.Add(1)
-		<-release // hold the probe open so the others must hit the inflight gate
-		return jsonResponse(http.StatusOK, `{"tag_name":"v2.0.1"}`), nil
-	})}
-	c := NewUserAgentCache()
-
-	var wg sync.WaitGroup
-	results := make([]string, 5)
-	for i := range results {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			results[i] = c.Warm(client)
-		}(i)
-	}
-	time.Sleep(100 * time.Millisecond) // let every goroutine reach Warm
-	close(release)
-	wg.Wait()
-
-	if got := calls.Load(); got != 1 {
-		t.Errorf("GitHub calls = %d, want 1 (concurrent warms must be deduplicated)", got)
-	}
-	for i, r := range results {
-		if r == "" {
-			t.Errorf("Warm() goroutine %d returned empty UA", i)
-		}
 	}
 }
