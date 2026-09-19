@@ -80,9 +80,13 @@ type fakeUpstream struct {
 	modelsCalls int
 	lastAuth    string
 	lastUA      string
+	lastSession string
+	lastClient  string
 	lastChat    map[string]any
 	lastResp    map[string]any
-	override    int // when non-zero, chat/responses answer this status
+	chatReply   string // settable canned chat SSE ("" = chatSSE default)
+	respReply   string // settable canned responses SSE ("" = responsesSSE default)
+	override    int    // when non-zero, chat/responses answer this status
 }
 
 func (f *fakeUpstream) record(kind string, r *http.Request, body map[string]any) {
@@ -100,6 +104,54 @@ func (f *fakeUpstream) record(kind string, r *http.Request, body map[string]any)
 	}
 	f.lastAuth = r.Header.Get("Authorization")
 	f.lastUA = r.Header.Get("User-Agent")
+	f.lastSession = r.Header.Get("x-opencode-session")
+	f.lastClient = r.Header.Get("x-opencode-client")
+}
+
+// setReplies swaps the canned SSE bodies (per-test); empty args keep the
+// current value.
+func (f *fakeUpstream) setReplies(chat, resp string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if chat != "" {
+		f.chatReply = chat
+	}
+	if resp != "" {
+		f.respReply = resp
+	}
+}
+
+func (f *fakeUpstream) replyFor(kind string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if kind == "chat" {
+		if f.chatReply != "" {
+			return f.chatReply
+		}
+		return chatSSE
+	}
+	if f.respReply != "" {
+		return f.respReply
+	}
+	return responsesSSE
+}
+
+func (f *fakeUpstream) upstreamHeader(t *testing.T, name string) string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch name {
+	case "authorization":
+		return f.lastAuth
+	case "user-agent":
+		return f.lastUA
+	case "x-opencode-session":
+		return f.lastSession
+	case "x-opencode-client":
+		return f.lastClient
+	}
+	t.Fatalf("untracked upstream header %q", name)
+	return ""
 }
 
 func (f *fakeUpstream) snapshot() (chat, resp, models int) {
@@ -165,9 +217,9 @@ func (f *fakeUpstream) handleGeneration(kind string) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if kind == "chat" {
-			_, _ = io.WriteString(w, chatSSE)
+			_, _ = io.WriteString(w, f.replyFor("chat"))
 		} else {
-			_, _ = io.WriteString(w, responsesSSE)
+			_, _ = io.WriteString(w, f.replyFor("responses"))
 		}
 	}
 }

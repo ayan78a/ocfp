@@ -37,6 +37,36 @@ Covered, end to end through the wire:
 - `image_url` on a non-vision model → stripped, placeholder text upstream
 - `/v1/models` → free filter (`-free` + `big-pickle`, dead ids dropped, sorted)
 
+### Tool pipeline & client personas (`tools_test.go`)
+
+Cross-interface checks — clients with different tool shapes must all reach
+the upstream correctly:
+
+- Claude Code persona (`claude-code/*` UA or `x-app: cli`): Exa MCP presence
+  strips the duplicated `WebSearch`/`WebFetch` built-ins while every other
+  client tool survives verbatim; the lowercase fingerprint quartet is
+  injected alongside the client's capitalized `Bash` (casing never satisfies
+  the gate)
+- Non-claude clients: identical tool list passes through untouched (dedupe is
+  claude-gated), quartet still merged
+- Tools-less caller: quartet + `tool_choice: "none"` (model can't call the
+  injected no-ops)
+- Chat client → muse-spark: translated to `/zen/v1/responses` upstream —
+  input items, flattened tools, `tool_choice` demoted to auto (muse is
+  auto-only), `store:false`
+- Native Responses client → muse: explicit non-auto `tool_choice` demoted
+- Upstream tool_call round trip: split SSE fragments (id + partial name +
+  arguments across chunks) reassembled for non-streaming chat clients
+  (`finish_reason: tool_calls`, `content: null`), forwarded raw for
+  streaming clients, and converted to a `function_call` output item for
+  Responses clients on a chat-native model
+- Agent-loop follow-up: assistant `tool_calls` + `role:"tool"` result reach
+  upstream with id linkage verbatim; a missing tool_call id is repaired to
+  the deterministic `call_msg1_tc0_read_file`
+- Session/header personas: native `ses_…` passes through verbatim, a Claude
+  Code session id is translated to the opencode shape, client-declared
+  `x-opencode-client` honored over the `desktop` default
+
 ## Live suite (real proxy + real upstream)
 
 Against an already-running proxy (default `http://127.0.0.1:8090`). Skipped
