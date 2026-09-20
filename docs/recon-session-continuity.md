@@ -22,15 +22,15 @@ session header; read `usage.prompt_tokens_details.cached_tokens`.
 
 ## Results
 
-| # | Session | Status | prompt | cached_tokens | Note |
-|---|---|---|---|---|---|
-| A1 | S1 | 200 | 463 | 256 | stored secret, answered `ok` |
-| A2 | **S2** (different) | 200 | 457 | 256 | **no error** |
-| A3 | S1 (same) | 200 | 457 | 256 | **no error**, same shape as A2 |
-| B1 | S1 | 200 | 651 | 256 | first hit of the shared prefix |
-| B2 | S1 (repeat) | 200 | 651 | **512** | cache grew |
-| B3 | **S2** (different) | 200 | 651 | **512** | cache NOT lost |
-| B4 | *(none — proxy forged a fresh session)* | 200 | 651 | **512** | cache NOT lost |
+| #   | Session                                 | Status | prompt | cached_tokens | Note                           |
+| --- | --------------------------------------- | ------ | ------ | ------------- | ------------------------------ |
+| A1  | S1                                      | 200    | 463    | 256           | stored secret, answered `ok`   |
+| A2  | **S2** (different)                      | 200    | 457    | 256           | **no error**                   |
+| A3  | S1 (same)                               | 200    | 457    | 256           | **no error**, same shape as A2 |
+| B1  | S1                                      | 200    | 651    | 256           | first hit of the shared prefix |
+| B2  | S1 (repeat)                             | 200    | 651    | **512**       | cache grew                     |
+| B3  | **S2** (different)                      | 200    | 651    | **512**       | cache NOT lost                 |
+| B4  | _(none — proxy forged a fresh session)_ | 200    | 651    | **512**       | cache NOT lost                 |
 
 ## Conclusions
 
@@ -57,18 +57,18 @@ Same rig, header `x-opencode-project` varied alongside/instead of the
 session (`P1`/`P2` native-looking values, the official CLI sends
 `project.id` here — request.ts:190; the proxy forges `global` by default).
 
-| # | Session | Project | Status | cached_tokens | Note |
-|---|---|---|---|---|---|
-| C1 | S1 | P1 | 200 | 256 | stored secret, answered `ok` |
-| C2 | **S2** | **P2** | 200 | 256 | both different — **no error** |
-| C3 | S1 | P1 | 200 | 256 | no recall (stateless, same as §A) |
-| D1 | S1 | P1 | 200 | **512** | shared filler prefix already cached from the earlier session run (~30 min old) |
-| D2 | S1 | P1 | 200 | 512 | |
-| D3 | S1 | **P2** | 200 | **512** | project switch — cache intact |
-| D4 | **S2** | **P2** | 200 | **512** | both switched — cache intact |
-| D5 | *(forged)* | *(proxy default `global`)* | 200 | **512** | |
-| D6 | S1 | *200-char junk* | 200 | **512** | no validation, no error |
-| D7 | S1 | `not-a-project` | 200 | **512** | no validation, no error |
+| #   | Session    | Project                    | Status | cached_tokens | Note                                                                           |
+| --- | ---------- | -------------------------- | ------ | ------------- | ------------------------------------------------------------------------------ |
+| C1  | S1         | P1                         | 200    | 256           | stored secret, answered `ok`                                                   |
+| C2  | **S2**     | **P2**                     | 200    | 256           | both different — **no error**                                                  |
+| C3  | S1         | P1                         | 200    | 256           | no recall (stateless, same as §A)                                              |
+| D1  | S1         | P1                         | 200    | **512**       | shared filler prefix already cached from the earlier session run (~30 min old) |
+| D2  | S1         | P1                         | 200    | 512           |                                                                                |
+| D3  | S1         | **P2**                     | 200    | **512**       | project switch — cache intact                                                  |
+| D4  | **S2**     | **P2**                     | 200    | **512**       | both switched — cache intact                                                   |
+| D5  | _(forged)_ | _(proxy default `global`)_ | 200    | **512**       |                                                                                |
+| D6  | S1         | _200-char junk_            | 200    | **512**       | no validation, no error                                                        |
+| D7  | S1         | `not-a-project`            | 200    | **512**       | no validation, no error                                                        |
 
 Findings:
 
@@ -78,7 +78,7 @@ Findings:
 2. **The prompt cache does not partition by project** either — `cached_tokens`
    followed the shared content prefix across project switches, across
    session+project switches, and across a completely forged identity. In D1
-   it even hit a cache entry warmed ~30 minutes earlier by a *different*
+   it even hit a cache entry warmed ~30 minutes earlier by a _different_
    body sharing only the prefix filler — pure content prefix caching,
    ~256-token block granularity.
 3. Practical rule: neither `x-opencode-session` nor `x-opencode-project`

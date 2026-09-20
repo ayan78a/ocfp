@@ -34,7 +34,7 @@ Claude Code (driver) ──HTTP──► opencode-free-proxy :8090
 - Egress A: machine IP `123.16.157.22` (Viettel AS7552, IPv4). Egress B, two
   different external HTTP proxies for two runs — run 1: `14.165.219.244`
   (Viettel AS7552, IPv4); run 2: `2401:3660:0:43ca:82ea:d807:dedc:45c8`
-  (Megacore AS140810, IPv6) — spanning a different ASN *and* address family.
+  (Megacore AS140810, IPv6) — spanning a different ASN _and_ address family.
   All egresses verified live via `https://www.cloudflare.com/cdn-cgi/trace`
   (`ip=` line); run 2's ASN via ipinfo.
 - Harness lives in `/tmp` (ephemeral, deliberately not committed; proxy
@@ -47,21 +47,21 @@ Claude Code (driver) ──HTTP──► opencode-free-proxy :8090
 
 Run 1 — egress B = Viettel IPv4 proxy:
 
-| Turn | Egress | session / project / request id | Status | Recall | `cached_tokens` |
-|---|---|---|---|---|---|
-| R1 plant | A `123.16.157.22` | fresh | 200 | — (plant ack "OK.") | 256 |
-| R2 ask | **B `14.165.219.244`** | fresh | 200 | **YES — "MANGO-42."** | 256 |
-| R3 ask | A again | fresh | 200 | YES | 256 |
-| R4 ask | B again | fresh | 200 | YES | 256 |
+| Turn     | Egress                 | session / project / request id | Status | Recall                | `cached_tokens` |
+| -------- | ---------------------- | ------------------------------ | ------ | --------------------- | --------------- |
+| R1 plant | A `123.16.157.22`      | fresh                          | 200    | — (plant ack "OK.")   | 256             |
+| R2 ask   | **B `14.165.219.244`** | fresh                          | 200    | **YES — "MANGO-42."** | 256             |
+| R3 ask   | A again                | fresh                          | 200    | YES                   | 256             |
+| R4 ask   | B again                | fresh                          | 200    | YES                   | 256             |
 
 Run 2 — egress B = Megacore IPv6 proxy (different ASN + family):
 
-| Turn | Egress | session / project / request id | Status | Recall | `cached_tokens` |
-|---|---|---|---|---|---|
-| R1 plant | A `123.16.157.22` | fresh | 200 | — (plant ack "OK") | 256 |
-| R2 ask | **B `2401:3660:…:45c8`** | fresh | 200 | **YES — "MANGO-42"** | 256 |
-| R3 ask | A again | fresh | 200 | YES | 256 |
-| R4 ask | B again | fresh | 200 | YES | 256 |
+| Turn     | Egress                   | session / project / request id | Status | Recall               | `cached_tokens` |
+| -------- | ------------------------ | ------------------------------ | ------ | -------------------- | --------------- |
+| R1 plant | A `123.16.157.22`        | fresh                          | 200    | — (plant ack "OK")   | 256             |
+| R2 ask   | **B `2401:3660:…:45c8`** | fresh                          | 200    | **YES — "MANGO-42"** | 256             |
+| R3 ask   | A again                  | fresh                          | 200    | YES                  | 256             |
+| R4 ask   | B again                  | fresh                          | 200    | YES                  | 256             |
 
 Non-200: none in either run (8/8 turns). First attempt succeeded on every
 turn — no retry budget was consumed by the switches.
@@ -89,7 +89,7 @@ turn — no retry budget was consumed by the switches.
 
 ## Limitations
 
-- Minutes-long windows, 8 turns total: this rules out *observed* blocking,
+- Minutes-long windows, 8 turns total: this rules out _observed_ blocking,
   not a statistical rate-limit policy. The three egresses span two ASNs
   (Viettel AS7552, Megacore AS140810) and both address families, but each
   pair was exercised only briefly.

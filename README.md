@@ -14,12 +14,12 @@ docker compose up -d --build # or: build + serve via compose (HOST_PORT, default
 
 Environment:
 
-| Var | Default | Meaning |
-|---|---|---|
-| `PORT` | `8090` | Listen port |
-| `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base (all routes incl. `/v1/models`) |
-| `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
-| `OFP_UA_SYNC_INTERVAL` | `3600000` (1h) | UA identity sync cadence (ms) — see docs/recon-opencode-ua.md |
+| Var                    | Default               | Meaning                                                       |
+| ---------------------- | --------------------- | ------------------------------------------------------------- |
+| `PORT`                 | `8090`                | Listen port                                                   |
+| `OFP_UPSTREAM_BASE`    | `https://opencode.ai` | Zen upstream base (all routes incl. `/v1/models`)             |
+| `OFP_API_KEY`          | _(empty = auth off)_  | Bearer key required from clients                              |
+| `OFP_UA_SYNC_INTERVAL` | `3600000` (1h)        | UA identity sync cadence (ms) — see docs/recon-opencode-ua.md |
 
 ## Endpoints
 
@@ -78,17 +78,17 @@ upstream and are translated transparently for chat clients.
 
 ## Layout
 
-| Package | Ports |
-|---|---|
-| `internal/identity` | session/request-id generation, UA triple cache + GitHub sync, session resolution chain |
-| `internal/cloak` | thinking suffix parse/apply, model id/URL, fingerprint tools, responses sanitization |
-| `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms |
-| `internal/relay` | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam |
-| `internal/usage` | usage normalization/merge/estimation/thinking synthesis |
-| `internal/upstream` | HTTP client (retry, SSE line scan), executor transforms, headers |
-| `internal/caps` | per-model input-modality resolution (vision/pdf/audio/video) |
-| `internal/router` | endpoints, chatCore pipeline, forced-SSE-to-JSON, bypass/test-connection/modality/tool-dedupe stages |
-| `e2e/` | black-box e2e suite (`-tags e2e`): compiled server subprocess + fake upstream; opt-in live suite |
+| Package              | Ports                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| `internal/identity`  | session/request-id generation, UA triple cache + GitHub sync, session resolution chain               |
+| `internal/cloak`     | thinking suffix parse/apply, model id/URL, fingerprint tools, responses sanitization                 |
+| `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms                                 |
+| `internal/relay`     | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam                                   |
+| `internal/usage`     | usage normalization/merge/estimation/thinking synthesis                                              |
+| `internal/upstream`  | HTTP client (retry, SSE line scan), executor transforms, headers                                     |
+| `internal/caps`      | per-model input-modality resolution (vision/pdf/audio/video)                                         |
+| `internal/router`    | endpoints, chatCore pipeline, forced-SSE-to-JSON, bypass/test-connection/modality/tool-dedupe stages |
+| `e2e/`               | black-box e2e suite (`-tags e2e`): compiled server subprocess + fake upstream; opt-in live suite     |
 
 ## Tests
 
@@ -103,3 +103,10 @@ See `e2e/README.md`. Golden unit vectors are ported from
 `9router-src/tests/unit/opencode-*.test.js`
 (session ids, client version gate, tool-choice forcing, max output tokens,
 muse-spark thinking) plus end-to-end httptest coverage of every relay branch.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — setup, commands, hooks, commit
+conventions, and the release flow. Security matters go through
+[SECURITY.md](SECURITY.md), never a public issue. Licensed
+[Apache-2.0](LICENSE).

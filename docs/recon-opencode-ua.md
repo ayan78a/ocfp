@@ -71,11 +71,11 @@ x-opencode-client: cli
 
 ## 4. Where each version comes from (the sync chains)
 
-| Segment | Source at tag `vX.Y.Z` | v1.18.31 value | Verified by |
-|---|---|---|---|
-| `opencode/<v>` | GitHub releases API, latest `tag_name` | `1.18.31` | API query 2026-09-20 (published 2026-09-14) |
-| `runtime/bun/<b>` | root `package.json` → `"packageManager": "bun@<b>"` | `1.3.14` | raw file at the tag; matches the captured UA |
-| `ai-sdk/provider-utils/<p>` | `bun.lock` at the tag, resolution key `opencode/@ai-sdk/openai-compatible/@ai-sdk/provider-utils` | `4.0.23` | captured UA == this resolution; cross-checked `registry.npmjs.org/@ai-sdk/openai-compatible/2.0.41` → `dependencies["@ai-sdk/provider-utils"] = "4.0.23"` |
+| Segment                     | Source at tag `vX.Y.Z`                                                                            | v1.18.31 value | Verified by                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opencode/<v>`              | GitHub releases API, latest `tag_name`                                                            | `1.18.31`      | API query 2026-09-20 (published 2026-09-14)                                                                                                               |
+| `runtime/bun/<b>`           | root `package.json` → `"packageManager": "bun@<b>"`                                               | `1.3.14`       | raw file at the tag; matches the captured UA                                                                                                              |
+| `ai-sdk/provider-utils/<p>` | `bun.lock` at the tag, resolution key `opencode/@ai-sdk/openai-compatible/@ai-sdk/provider-utils` | `4.0.23`       | captured UA == this resolution; cross-checked `registry.npmjs.org/@ai-sdk/openai-compatible/2.0.41` → `dependencies["@ai-sdk/provider-utils"] = "4.0.23"` |
 
 Why the bun.lock key: the lockfile installs several provider-utils copies
 (4.0.21 / 23 / 27 / 32 / 33 / 35 / 38 / **40** / 45 / 46 / 50 / 51 at this
@@ -95,7 +95,7 @@ fallback.
 - **Default triple** — `internal/config`: `ClientFallbackVersion` (releases
   probe fallback) + `ClientFallbackProviderUtils` + `ClientFallbackBun`
   compose the compiled-in UA `opencode/1.18.31 ai-sdk/provider-utils/4.0.23
-  runtime/bun/1.3.14` — byte-identical to the capture. This is the "chosen
+runtime/bun/1.3.14` — byte-identical to the capture. This is the "chosen
   tag" default; sync keeps it current without rebuilds.
 - **Sync** — `internal/identity.UserAgentCache.Warm` (all-or-nothing, so the
   cache never holds segments from two releases):

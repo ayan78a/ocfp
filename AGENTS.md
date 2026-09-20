@@ -23,28 +23,47 @@ go test -tags e2e ./e2e/             # black-box e2e: builds cmd/server, runs it
                                      #   subprocess against a fake zen upstream
 E2E_LIVE=1 go test -tags e2e ./e2e/ -run TestLive   # optional: real proxy + real upstream
 go vet ./... && go vet -tags e2e ./e2e/ && gofmt -l .   # must all be clean
+golangci-lint run ./...              # v2 standard baseline — what CI's Lint step runs
+pnpm format                          # prettier over docs/workflows/configs
 ```
 
-All three gates (vet both tag sets, gofmt, full test suites) must pass before
-every commit. Commit messages follow Conventional Commits (`feat:`, `fix:`,
-`test:`, `docs:`).
+All gates (vet both tag sets, gofmt, golangci-lint, full test suites) must
+pass before every commit. The repo toolchain (commitlint, lefthook,
+prettier) lives in `package.json` — `pnpm install` wires the git hooks;
+commitlint's `scope-enum` mirrors the package table below. CI (`.github/
+workflows/`) runs the same gates plus CodeQL, Semgrep, Gitleaks, and the
+black-box e2e suite; release-please owns `CHANGELOG.md` and tags (do not
+hand-edit either).
+
+## The Semgrep directory has two non-obvious constraints
+
+`semgrep --config .github/semgrep` loads every `.yml`/`.yaml` file in that
+directory as a candidate rule config, regardless of naming:
+
+1. A file without a top-level `rules:` key aborts the whole run with exit 7
+   — which is why the `workflows.test.yaml` fixture declares `rules: []`.
+2. A `.yml`/`.yaml`-suffixed file needs the `.test.` infix to be recognised
+   as a test target rather than only as a config candidate.
+
+Both were confirmed against semgrep 1.172.0 by running it, and both apply
+only to `languages: [yaml]` fixtures.
 
 ## Layout
 
-| Package | Role |
-|---|---|
-| `cmd/server` | entrypoint; also serves `healthcheck` (Docker HEALTHCHECK on `scratch`) |
-| `internal/config` | every runtime constant + env vars (`PORT`, `OFP_API_KEY`, `OFP_UPSTREAM_BASE`) |
-| `internal/router` | endpoints + chatCore pipeline + bypass/test-connection/modality/tool-dedupe stages |
-| `internal/relay` | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam |
-| `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms, modality strip |
-| `internal/upstream` | HTTP client (retry matrix, SSE line scan), executor transforms, header forging |
-| `internal/cloak` | thinking suffix parse/apply, model id/URL, fingerprint tools |
-| `internal/identity` | session/request ids, opencode UA triple cache + GitHub sync loop (fail-open), session resolution chain |
-| `internal/caps` | per-model input-modality resolution (exact table → glob patterns → name heuristic) |
-| `internal/usage` | usage normalization/merge/estimation/thinking synthesis |
-| `internal/jsonx` | JS-semantics JSON accessors (`AsStr`/`AsArr`/`Truthy`/…) |
-| `e2e/` | black-box e2e suite behind the `e2e` build tag (see `e2e/README.md`) |
+| Package              | Role                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `cmd/server`         | entrypoint; also serves `healthcheck` (Docker HEALTHCHECK on `scratch`)                                |
+| `internal/config`    | every runtime constant + env vars (`PORT`, `OFP_API_KEY`, `OFP_UPSTREAM_BASE`)                         |
+| `internal/router`    | endpoints + chatCore pipeline + bypass/test-connection/modality/tool-dedupe stages                     |
+| `internal/relay`     | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam                                     |
+| `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms, modality strip                   |
+| `internal/upstream`  | HTTP client (retry matrix, SSE line scan), executor transforms, header forging                         |
+| `internal/cloak`     | thinking suffix parse/apply, model id/URL, fingerprint tools                                           |
+| `internal/identity`  | session/request ids, opencode UA triple cache + GitHub sync loop (fail-open), session resolution chain |
+| `internal/caps`      | per-model input-modality resolution (exact table → glob patterns → name heuristic)                     |
+| `internal/usage`     | usage normalization/merge/estimation/thinking synthesis                                                |
+| `internal/jsonx`     | JS-semantics JSON accessors (`AsStr`/`AsArr`/`Truthy`/…)                                               |
+| `e2e/`               | black-box e2e suite behind the `e2e` build tag (see `e2e/README.md`)                                   |
 
 ## Porting discipline (the rules that keep parity)
 
@@ -72,12 +91,12 @@ every commit. Commit messages follow Conventional Commits (`feat:`, `fix:`,
 
 ## Environment
 
-| Var | Default | Meaning |
-|---|---|---|
-| `PORT` | `8090` | Listen port (`0` valid in tests) |
-| `OFP_API_KEY` | *(empty = auth off)* | Bearer key required from clients |
-| `OFP_UPSTREAM_BASE` | `https://opencode.ai` | Zen upstream base, all routes |
-| `OFP_UA_SYNC_INTERVAL` | `3600000` | UA identity sync cadence in ms (background ticker; hot path never fetches) |
+| Var                    | Default               | Meaning                                                                    |
+| ---------------------- | --------------------- | -------------------------------------------------------------------------- |
+| `PORT`                 | `8090`                | Listen port (`0` valid in tests)                                           |
+| `OFP_API_KEY`          | _(empty = auth off)_  | Bearer key required from clients                                           |
+| `OFP_UPSTREAM_BASE`    | `https://opencode.ai` | Zen upstream base, all routes                                              |
+| `OFP_UA_SYNC_INTERVAL` | `3600000`             | UA identity sync cadence in ms (background ticker; hot path never fetches) |
 
 ## Security
 
