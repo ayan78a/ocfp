@@ -1,2 +1,6 @@
 *.test
 /dist/
+/bin/
+/node_modules/
+/.claude/
+/config.yaml
