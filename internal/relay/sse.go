@@ -72,14 +72,6 @@ func FormatEvent(event string, data map[string]any) string {
 	return "event: " + event + "\ndata: " + string(b) + "\n\n"
 }
 
-// splitLines splits accumulated text into complete lines, keeping the trailing
-// partial line in the buffer (mirrors buffer.split("\n"); lines.pop()).
-func splitLines(buffer *string) []string {
-	parts := strings.Split(*buffer, "\n")
-	*buffer = parts[len(parts)-1]
-	return parts[:len(parts)-1]
-}
-
 // dataPayload returns the JSON text after "data:" (trimmed), or ok=false.
 func dataPayload(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)

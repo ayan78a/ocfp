@@ -97,7 +97,7 @@ func TransformRequest(model string, body map[string]any) {
 		if normalized := cloak.NormalizeResponsesInput(body["input"]); normalized != nil {
 			body["input"] = normalized
 		}
-		if input := jsonx.AsArr(body["input"]); input == nil || len(input) == 0 {
+		if input := jsonx.AsArr(body["input"]); len(input) == 0 {
 			body["input"] = []any{jsonx.ObjOf(
 				"type", "message",
 				"role", "user",

@@ -80,7 +80,7 @@ func TestRetryMatrix(t *testing.T) {
 		if uerr != nil {
 			t.Fatalf("expected success after retries, got %+v", uerr)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -236,7 +236,7 @@ func TestRetryMatrix(t *testing.T) {
 		sleeper := &recordingSleeper{}
 		resp, uerr := newTestClient(sleeper).Do(context.Background(), url, staticHeaders(), []byte("{}"))
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			t.Fatal("expected no response for a dead upstream")
 		}
 		if uerr == nil {
@@ -342,7 +342,7 @@ func TestSharedRetryBudgetAcrossStatuses(t *testing.T) {
 	sleeper := &recordingSleeper{}
 	resp, uerr := newTestClient(sleeper).Do(context.Background(), srv.URL, staticHeaders(), []byte("{}"))
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	if uerr == nil {
 		t.Fatal("expected the shared budget to exhaust")
@@ -388,7 +388,7 @@ func TestNetworkAndStatusShareRetryBudget(t *testing.T) {
 				t.Errorf("hijack: %v", err)
 				return
 			}
-			conn.Close() // no HTTP response at all → transport error
+			_ = conn.Close() // no HTTP response at all → transport error
 			return
 		}
 		w.WriteHeader(http.StatusBadGateway)
@@ -399,7 +399,7 @@ func TestNetworkAndStatusShareRetryBudget(t *testing.T) {
 	sleeper := &recordingSleeper{}
 	resp, uerr := newTestClient(sleeper).Do(context.Background(), srv.URL, staticHeaders(), []byte("{}"))
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	if uerr == nil {
 		t.Fatal("expected the shared budget to exhaust")
@@ -427,7 +427,7 @@ func TestNetworkAndStatusShareRetryBudget(t *testing.T) {
 func doExpectHeaders(c *Client, url string, buildHeaders func() map[string]string) (*UpstreamError, int) {
 	resp, uerr := c.Do(context.Background(), url, buildHeaders, []byte("{}"))
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	return uerr, 0
 }
@@ -435,7 +435,7 @@ func doExpectHeaders(c *Client, url string, buildHeaders func() map[string]strin
 func doExpectError(c *Client, url string) (*UpstreamError, int) {
 	resp, uerr := c.Do(context.Background(), url, staticHeaders(), []byte("{}"))
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	return uerr, 0
 }

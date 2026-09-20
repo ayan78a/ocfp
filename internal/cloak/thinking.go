@@ -305,8 +305,8 @@ func ApplyThinking(body map[string]any, model string, intent *ThinkingCfg) {
 	}
 	StripAll(body)
 
-	switch {
-	case cfg.Mode == "none":
+	switch cfg.Mode {
+	case "none":
 		// thinkingCanDisable defaults true for muse-spark.
 		body["reasoning_effort"] = "none"
 	default:

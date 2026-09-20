@@ -39,7 +39,7 @@ func forcedUpstreamIsSSE(resp *http.Response) bool {
 // body is the JS parse-failure case, which answers 502 below
 // (sseToJsonHandler.js "Failed to convert streaming response to JSON").
 func (s *Server) forcedSSEToJson(w http.ResponseWriter, r *http.Request, resp *http.Response, sourceFormat, targetFormat relay.Format, model string, customToolNames map[string]bool, reqBody map[string]any, upstreamModel string, intent *cloak.ThinkingCfg) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {

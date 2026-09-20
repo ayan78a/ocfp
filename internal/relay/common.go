@@ -48,7 +48,7 @@ func ResolveSynthesis(body map[string]any, model string, intent *cloak.ThinkingC
 // Reports whether it mutated the chunk.
 func fixInvalidID(parsed map[string]any) bool {
 	id, is := parsed["id"].(string)
-	if !is || !(id == "chat" || id == "completion" || len(id) < 8) {
+	if !is || (id != "chat" && id != "completion" && len(id) >= 8) {
 		return false
 	}
 	fallback := ""

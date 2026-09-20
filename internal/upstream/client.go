@@ -188,13 +188,6 @@ func parseUpstreamError(status int, body []byte) *UpstreamError {
 	return &UpstreamError{Status: status, Message: message}
 }
 
-// formatProviderError renders a transport failure exactly like chatCore's
-// catch (formatProviderError with statusCode 502). Unused here — the prefix
-// is applied once, at write time.
-func formatProviderError(err error) string {
-	return fmt.Sprintf("[502]: %s", err.Error())
-}
-
 // BuildErrorBody ports buildErrorBody: the OpenAI-compatible error envelope.
 func BuildErrorBody(statusCode int, message string) map[string]any {
 	info, known := config.ErrorTypes[statusCode]

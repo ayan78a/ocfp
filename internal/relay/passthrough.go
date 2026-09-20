@@ -27,23 +27,22 @@ import (
 //   - doneSent: streamDoneSent/openAIResponsesDoneSent (stream.js:146-147,
 //     set at 421-422) — the [DONE] sentinel was already emitted.
 type PassthroughRelay struct {
-	out             io.Writer
-	body            map[string]any
-	model           string
-	format          Format
-	synthesis       Synthesis
-	now             func() time.Time
-	terminalSeen    bool
-	doneSent        bool
-	finalized       bool
-	totalLen        int
-	content         strings.Builder
-	thinking        strings.Builder
-	trackedUsage    map[string]any
-	FinalUsage      map[string]any
-	FinalContent    string
-	FinalThinking   string
-	onFinalizeLines []string
+	out           io.Writer
+	body          map[string]any
+	model         string
+	format        Format
+	synthesis     Synthesis
+	now           func() time.Time
+	terminalSeen  bool
+	doneSent      bool
+	finalized     bool
+	totalLen      int
+	content       strings.Builder
+	thinking      strings.Builder
+	trackedUsage  map[string]any
+	FinalUsage    map[string]any
+	FinalContent  string
+	FinalThinking string
 }
 
 // NewPassthroughRelay wires a relay writing raw SSE bytes to out. intent is

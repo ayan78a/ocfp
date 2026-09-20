@@ -553,7 +553,7 @@ func TestMuseSparkResponsesPassthroughAbortTerminal(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		// Declare more body bytes than we send, then drop the connection: the
 		// client sees response headers, partial SSE, and a transport error.
 		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 4096\r\n\r\n"))

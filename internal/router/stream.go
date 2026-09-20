@@ -36,7 +36,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, resp *http.Respo
 	defer cancelUpstream()
 	// Retry/error/forced paths close explicitly; this covers the relay paths
 	// (base.js consumes or cancels the body either way).
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Non-SSE upstream body (Cloudflare 5xx HTML page): return a clean JSON
 	// error instead of piping garbage through the SSE path. JS builds the

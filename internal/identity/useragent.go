@@ -258,7 +258,7 @@ func fetchRaw(client *http.Client, tag, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, &statusError{code: resp.StatusCode}
 	}
@@ -290,7 +290,7 @@ func fetchLatestRelease(client *http.Client) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", &statusError{code: resp.StatusCode}
 	}
