@@ -1,0 +1,90 @@
+name: Bug report
+description: The proxy behaves differently from its documented contract.
+title: "bug: "
+labels: ["needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [`README.md`](../../blob/main/README.md) is the behavior contract —
+        please quote the passage the behavior disagrees with. The porting
+        discipline (JS citations, JS truthiness, constants in
+        `internal/config`, fail-open vs fail-closed) lives in
+        [`AGENTS.md`](../../blob/main/AGENTS.md).
+
+        **Do not report a security vulnerability here.** A configured
+        `OFP_API_KEY` (or any live credential) reaching a log line or an
+        error goes through a
+        [private security advisory](../../security/advisories/new)
+        instead — see [SECURITY.md](../../blob/main/SECURITY.md).
+
+        Never paste API keys, live proxy credentials, or real session ids
+        into this form; use placeholders.
+  - type: checkboxes
+    id: before-filing
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues for a duplicate.
+          required: true
+        - label: This report contains no credentials and no real session ids.
+          required: true
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens?
+      description: The observed behavior — status codes, error bodies, log lines (redacted).
+    validations:
+      required: true
+  - type: textarea
+    id: what-should-happen
+    attributes:
+      label: What should happen instead?
+      description: Quote the documented contract (README/AGENTS passage) the behavior disagrees with.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does this belong to?
+      options:
+        - Session / request ids, UA sync (internal/identity)
+        - Thinking suffixes, model id/URL, fingerprint tools (internal/cloak)
+        - Request translators, prenorms, modality strip (internal/translate)
+        - SSE relays, SSE→JSON aggregation (internal/relay)
+        - Upstream client, executor transforms, headers (internal/upstream)
+        - Endpoints + chatCore pipeline stages (internal/router)
+        - Modality capabilities (internal/caps)
+        - Usage normalization / synthesis (internal/usage)
+        - Constants + env (internal/config)
+        - Entrypoint / healthcheck (cmd/server)
+        - E2E suite (e2e)
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        - Version (`docker compose` image tag, or the binary's startup log line)
+        - Client (Claude Code, curl, other) and how it authenticates
+        - Deployment: docker compose / bare binary
+    validations:
+      required: true
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else?
+    validations:
+      required: false

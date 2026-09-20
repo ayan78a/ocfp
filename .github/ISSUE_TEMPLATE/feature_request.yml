@@ -1,0 +1,70 @@
+name: Feature request
+description: Propose a capability — pipeline behavior, model handling, deployment.
+title: "feat: "
+labels: ["needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [`README.md`](../../blob/main/README.md) is the behavior contract. A
+        proposal that moves documented behavior must say which sections
+        change, and the pull request that lands it updates those sections in
+        the same pass. This is a line-for-line port of the 9router opencode
+        handling — a behavior change needs JS evidence (see AGENTS.md
+        "Porting discipline").
+
+        Already-decided out of scope (a proposal here should argue the
+        decision, not restate the wish):
+
+        - Paid-tier, multi-provider, or API-key upstream support — the scope
+          is fixed: opencode zen free tier only (`Bearer public`).
+        - Non-OpenAI-compatible client APIs — chat completions + responses +
+          models is the surface.
+        - Identity persistence across restarts (session stores surviving a
+          process restart) — the in-memory TTL stores are a design, not a
+          gap.
+  - type: checkboxes
+    id: before-filing
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues for a duplicate.
+          required: true
+        - label: This does not conflict with a decision listed out of scope above.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What are you proposing?
+    validations:
+      required: true
+  - type: textarea
+    id: quiet-direction
+    attributes:
+      label: What happens if this change is wrong in the quiet direction?
+      description: >
+        The dangerous failure here is the silent one — a 429 that gets
+        retried when the contract says fail fast, a synced UA silently
+        falling back to the stale default, a fingerprint tool dropped from
+        the request so every call starts 403ing. "No quiet direction" is a
+        valid answer when it is true.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false
+  - type: checkboxes
+    id: pr
+    attributes:
+      label: Would you like to open the pull request for this?
+      options:
+        - label: I am willing to open a pull request for this.
