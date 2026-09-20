@@ -163,7 +163,22 @@ type Config struct {
 	APIKey         string // optional inbound API key; empty = no auth
 	UpstreamBase   string
 	UASyncInterval time.Duration
+	// ConfigPath is OFP_CONFIG: the routing config file. Empty = the
+	// default single-egress runtime.
+	ConfigPath string
+	// ShutdownGrace is OFP_SHUTDOWN_GRACE: how long draining waits for
+	// active requests/streams before forced close.
+	ShutdownGrace time.Duration
+	// ConfigPoll is OFP_CONFIG_POLL_MS: the hot-reload poll interval.
+	ConfigPoll time.Duration
 }
+
+// DefaultShutdownGrace is used when OFP_SHUTDOWN_GRACE is unset (ms).
+const DefaultShutdownGrace = 30 * time.Second
+
+// DefaultConfigPoll is the hot-reload poll interval (the rotation-proxy
+// gateway design polled at 1 s; repeated writes coalesce).
+const DefaultConfigPoll = time.Second
 
 func FromEnv() *Config {
 	return &Config{
@@ -171,6 +186,13 @@ func FromEnv() *Config {
 		APIKey:         os.Getenv("OFP_API_KEY"),
 		UpstreamBase:   envOr("OFP_UPSTREAM_BASE", UpstreamBase),
 		UASyncInterval: envMs("OFP_UA_SYNC_INTERVAL", UASyncInterval),
+		ConfigPath:     os.Getenv("OFP_CONFIG"),
+		// OFP_SHUTDOWN_GRACE is milliseconds like every other ms sibling
+		// (OFP_CONFIG_POLL_MS, OFP_UA_SYNC_INTERVAL). A "30s" duration string
+		// would be silently dropped by envDur's ParseDuration; envMs matches
+		// the documented contract.
+		ShutdownGrace: envMs("OFP_SHUTDOWN_GRACE", DefaultShutdownGrace),
+		ConfigPoll:    envMs("OFP_CONFIG_POLL_MS", DefaultConfigPoll),
 	}
 }
 

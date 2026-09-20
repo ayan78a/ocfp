@@ -20,6 +20,64 @@ Environment:
 | `OFP_UPSTREAM_BASE`    | `https://opencode.ai` | Zen upstream base (all routes incl. `/v1/models`)             |
 | `OFP_API_KEY`          | _(empty = auth off)_  | Bearer key required from clients                              |
 | `OFP_UA_SYNC_INTERVAL` | `3600000` (1h)        | UA identity sync cadence (ms) — see docs/recon-opencode-ua.md |
+| `OFP_CONFIG`           | _(empty = built-in)_  | Multi-egress routing config file (YAML) — see below           |
+| `OFP_CONFIG_POLL_MS`   | `1000`                | Hot-reload poll interval for `OFP_CONFIG` (ms)                |
+| `OFP_SHUTDOWN_GRACE`   | `30000` (30s)         | Drain window: active streams finish before forced close (ms)  |
+
+## Multi-egress routing (`OFP_CONFIG`)
+
+`OFP_CONFIG` points at a YAML file describing egresses (per-egress proxy:
+http/https/socks5 or direct), routes that pick from them, and the global
+fallback/health policy. The file is re-read on the `OFP_CONFIG_POLL_MS`
+interval — route/egress/health edits apply without a restart; invalid files
+keep the last good runtime and are logged.
+
+```yaml
+egress:
+  - id: primary
+    proxy: { type: http, url: "https://creds@proxy-a.example:8080" }
+    # max_concurrency: 4   # in-flight cap; 0 = unlimited (default)
+    # models: ["*-free"]   # glob allow-list; empty = every model
+    # streaming: true      # accepts streaming; default true
+    # max_body_bytes: 0    # inbound body bound; 0 = unlimited
+    # weight: 5            # share under weighted_round_robin
+  - id: backup
+    proxy: { type: socks5, url: "socks5://user:secret@proxy-b.example:1080" }
+  - id: direct
+    enabled: true # false = configured but never scheduled
+routes:
+  - id: default
+    egress: [primary, backup, direct]
+    strategy: round_robin # or weighted_round_robin
+    match: # AND of the set conditions; empty = catch-all
+      # models: ["*-free", "big-pickle"]
+      # streaming: true
+      # min_body_bytes: 0
+      # max_body_bytes: 10485760
+fallback:
+  enabled: true
+  max_attempts: 3 # distinct egresses incl. the first; 0 = default 3
+health:
+  enabled: true # default true with a config file
+  failure_threshold: 3 # consecutive failures before cooldown; 0 = never
+  cooldown: 1m # Go duration string ("30s", "1m")
+```
+
+Head selection is round-robin; a per-egress `weight` switches a route to
+smooth weighted rotation (`strategy: weighted_round_robin`). A route
+references egresses in fallback order — the planner rotates the head, the
+executor walks the rest. 429s fall back but never mark an egress unhealthy;
+5xx/network/connection errors count toward `failure_threshold` consecutive
+failures and cool the egress for `cooldown`; 4xx (other than 429) never fall
+back (the request is the problem, not the egress). Concurrency caps
+(`max_concurrency`) skip an egress at capacity — a skip is not a failure. On
+total failure the client gets a 502 envelope.
+
+Defaults with a config file: health enabled (`failure_threshold` 3, `cooldown`
+30s), fallback `max_attempts` 3 — set `health.enabled: false` to disable
+gating. Unset `OFP_CONFIG` = the historical single direct egress,
+byte-for-byte the old behavior: health gating is off there, so a config-less
+deployment cannot acquire a failure-threshold outage.
 
 ## Endpoints
 
@@ -78,17 +136,19 @@ upstream and are translated transparently for chat clients.
 
 ## Layout
 
-| Package              | Ports                                                                                                |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `internal/identity`  | session/request-id generation, UA triple cache + GitHub sync, session resolution chain               |
-| `internal/cloak`     | thinking suffix parse/apply, model id/URL, fingerprint tools, responses sanitization                 |
-| `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms                                 |
-| `internal/relay`     | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam                                   |
-| `internal/usage`     | usage normalization/merge/estimation/thinking synthesis                                              |
-| `internal/upstream`  | HTTP client (retry, SSE line scan), executor transforms, headers                                     |
-| `internal/caps`      | per-model input-modality resolution (vision/pdf/audio/video)                                         |
-| `internal/router`    | endpoints, chatCore pipeline, forced-SSE-to-JSON, bypass/test-connection/modality/tool-dedupe stages |
-| `e2e/`               | black-box e2e suite (`-tags e2e`): compiled server subprocess + fake upstream; opt-in live suite     |
+| Package              | Ports                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/config`    | runtime constants/env, multi-egress YAML model, hot-reload store, interpolation, redaction                                                           |
+| `internal/routing`   | route planning: model/streaming/body gates, round-robin + smooth weighted rotation, attempt order                                                    |
+| `internal/health`    | per-egress health registry: consecutive-failure threshold, cooldown, survives config swaps                                                           |
+| `internal/identity`  | session/request-id generation, UA triple cache + GitHub sync, session resolution chain                                                               |
+| `internal/translate` | request translators (chat ↔ responses), SSE state machines, prenorms                                                                                 |
+| `internal/relay`     | passthrough/translate SSE relays, SSE→JSON aggregation, usage seam                                                                                   |
+| `internal/usage`     | usage normalization/merge/estimation/thinking synthesis                                                                                              |
+| `internal/upstream`  | HTTP client (retry, SSE line scan), per-egress transports (http/socks5/direct), executor transforms, headers, fallback executor, concurrency limiter |
+| `internal/caps`      | per-model input-modality resolution (vision/pdf/audio/video)                                                                                         |
+| `internal/router`    | endpoints, chatCore pipeline, routing + fallback orchestration, forced-SSE-to-JSON, bypass/test-connection/modality/tool-dedupe stages               |
+| `e2e/`               | black-box e2e suite (`-tags e2e`): compiled server subprocess + fake upstream; opt-in live suite                                                     |
 
 ## Tests
 
