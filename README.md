@@ -9,6 +9,7 @@ and non-streaming.
 
 ```sh
 go run ./cmd/server          # listens on :8090, upstream https://opencode.ai
+docker compose up -d --build # or: build + serve via compose (HOST_PORT, default 30258)
 ```
 
 Environment:

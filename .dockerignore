@@ -1,0 +1,10 @@
+# Keep the build context to what the multi-stage build actually copies.
+.git
+.github
+docs
+e2e
+compose.yaml
+Dockerfile
+.dockerignore
+.gitignore
+*.md

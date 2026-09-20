@@ -1,0 +1,28 @@
+# Local testing deployment: builds the Dockerfile and serves the proxy on the
+# host. The image's built-in HEALTHCHECK (entrypoint subcommand — scratch has
+# no shell) is inherited; compose does not override it.
+#
+# Usage:
+#   docker compose up -d --build                  # anonymous free tier
+#   OFP_API_KEY=secret HOST_PORT=9090 docker compose up -d --build
+#
+# Point a client at http://localhost:8090/v1 (Bearer only when OFP_API_KEY
+# was set).
+
+services:
+  proxy:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-0.1.0-dev}
+    image: opencode-free-proxy:dev
+    container_name: opencode-free-proxy
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-30258}:8090"
+    environment:
+      # Inbound auth is optional: set OFP_API_KEY in the shell to require a
+      # Bearer key from clients; leave unset to keep auth off.
+      OFP_API_KEY: ${OFP_API_KEY:-}
+      # UA triple sync cadence in ms (default 1h). Rarely needed in testing.
+      OFP_UA_SYNC_INTERVAL: ${OFP_UA_SYNC_INTERVAL:-}
