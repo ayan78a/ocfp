@@ -234,9 +234,30 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, sourceFormat rela
 	// this point re-reads the store, so a hot reload affects only requests
 	// that have not started yet. Routing (start selection), fallback (attempt
 	// loop) and health (temporary eligibility) stay three separate decisions.
+	//
+	// The snapshot-get → route-match → health-pin sequence runs under
+	// clientMu — the SAME mutex onGeneration holds for its CAS + prune +
+	// health Reclaim (server.go) — so a newer generation's Reclaim can never
+	// run inside the window between this request's snapshot and its Pin: a
+	// reclaim either completed before this request took clientMu (then the
+	// swap that fed it is already visible and the Get below returns the NEWER
+	// snapshot, whose identities are the ones being pinned) or it is still
+	// pending and will observe this request's pins and spare them. Without the
+	// mutex a stale-snapshot request could pin AFTER a reclaim wiped its
+	// identity's state and then adjudicate against wiped history, breaking the
+	// pinned-identity contract in internal/health.
+	//
+	// Lock order is clientMu → health.Registry.mu on every path (Reclaim and
+	// Pin here, Healthy in routeHeads without clientMu, Observe from the
+	// executor without clientMu); the registry never calls back into the
+	// router, so the reverse edge does not exist and the ordering cannot
+	// deadlock. clientMu is released BEFORE onGeneration, which takes it
+	// itself; routeHeads (the first eligibility consult) deliberately stays
+	// AFTER onGeneration, so a request pays the once-per-generation
+	// maintenance before it consults eligibility.
+	s.clientMu.Lock()
 	rt := s.runtime()
 	hp := health.PolicyFromSnapshot(rt)
-	s.onGeneration(rt)
 	profile := routing.Profile{
 		Model:     cleanModel,
 		Streaming: clientRequestedStreaming,
@@ -244,10 +265,25 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, sourceFormat rela
 		Endpoint:  string(sourceFormat),
 	}
 	route, ok := rt.MatchRoute(profile.Streaming, profile.BodyBytes, profile.Model)
+	// Pin the route's health identities for the request's whole lifetime —
+	// released when relay returns, after the executor's last observation. A
+	// generation swap that stops referencing them must not reclaim the state
+	// this request plans against (issue #9); the pin is taken while clientMu
+	// is still held (see above) and precedes routeHeads, the first registry
+	// consult.
+	var releaseHealth func()
+	if ok && s.Health != nil {
+		releaseHealth = s.Health.Pin(routeHealthKeys(rt, route))
+	}
+	s.clientMu.Unlock()
 	if !ok {
 		writeError(w, http.StatusBadRequest, "No route matched this request")
 		return
 	}
+	if releaseHealth != nil {
+		defer releaseHealth()
+	}
+	s.onGeneration(rt)
 	heads := s.routeHeads(rt, route, profile, hp)
 	if len(heads) == 0 {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("No eligible egress for route %q", route.ID))
@@ -290,13 +326,18 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, sourceFormat rela
 	latency := time.Since(start)
 	if uerr != nil {
 		cancelUpstream()
-		s.logf("%s generation=%d route=%s egress=%s attempts=%d class=%s status=%d latency_ms=%d model=%s endpoint=%s fallback=%t",
+		// model=%q, not %s: the model id is client-controlled and survives
+		// cloak.BaseModelID verbatim — an embedded newline (or any control
+		// byte) would forge extra log lines (CWE-117). %q escapes them for the
+		// LOG LINE only; the JSON body echo is untouched (JSON escaping
+		// already protects it) and the upstream model id is unaffected.
+		s.logf("%s generation=%d route=%s egress=%s attempts=%d class=%s status=%d latency_ms=%d model=%q endpoint=%s fallback=%t",
 			reqID, rt.Generation, plan.RouteID, egID, attempts, class, uerr.Status, latency.Milliseconds(), cleanModel, profile.Endpoint, attempts > 1)
 		writeError(w, uerr.Status, fmt.Sprintf("[%d]: %s", uerr.Status, uerr.Message))
 		return
 	}
 	w.Header().Set("X-OFP-Egress", egID)
-	s.logf("%s generation=%d route=%s egress=%s attempts=%d class=%s status=%d latency_ms=%d model=%s endpoint=%s fallback=%t",
+	s.logf("%s generation=%d route=%s egress=%s attempts=%d class=%s status=%d latency_ms=%d model=%q endpoint=%s fallback=%t",
 		reqID, rt.Generation, plan.RouteID, egID, attempts, class, resp.StatusCode, latency.Milliseconds(), cleanModel, profile.Endpoint, attempts > 1)
 	// Forced SSE→JSON needs the upstream reply to actually be SSE
 	// (sseToJsonHandler.js:185-188): when it is not, chatCore falls through to
