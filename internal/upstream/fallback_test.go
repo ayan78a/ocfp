@@ -78,11 +78,10 @@ func newExecutorFixture(t *testing.T, statuses map[string]int) *executorFixture 
 		health:  health.New(),
 		slots:   NewLimiter(),
 	}
-	// The request path Configure()s the registry once per generation; use
-	// threshold 1 here so a single observed failure flips eligibility in
-	// tests.
-	f.health.Configure(true, 1, time.Minute)
-
+	// No registry-wide Configure: since issue #6 the health POLICY rides the
+	// AttemptPolicy (pinned per request snapshot), not the registry. Fixtures
+	// pass testHealthPolicy (threshold 1) via policy(), so a single observed
+	// failure flips eligibility in tests.
 	for id, status := range statuses {
 		f.servers[id] = scriptedUpstream(t, id, status, f.rec)
 	}
@@ -153,9 +152,22 @@ func (f *executorFixture) plan(routeID string, heads ...string) routing.RoutePla
 	return p
 }
 
-// policy builds an AttemptPolicy straight from the two knobs the tests vary.
+// testHealthPolicy is the health policy every fixture request pins: enabled,
+// threshold 1 (one observed failure arms), one-minute cooldown.
+var testHealthPolicy = health.Policy{Enabled: true, Threshold: 1, Cooldown: time.Minute}
+
+// healthKey maps a fixture egress id to its health identity. Fixture
+// egresses are direct, so this is exactly the key the executor observes
+// (id + separator + "direct").
+func healthKey(id string) string {
+	return (&config.Egress{ID: id}).HealthKey()
+}
+
+// policy builds an AttemptPolicy straight from the two knobs the tests vary,
+// pinning the shared test health policy like the handler pins one per
+// snapshot.
 func policy(fallback bool, max int) AttemptPolicy {
-	return AttemptPolicy{FallbackEnabled: fallback, MaxAttempts: max}
+	return AttemptPolicy{FallbackEnabled: fallback, MaxAttempts: max, HealthPolicy: testHealthPolicy}
 }
 func TestExecuteFirstEgressServes(t *testing.T) {
 	f := newExecutorFixture(t, map[string]int{"a": 200})
@@ -175,7 +187,7 @@ func TestExecuteFirstEgressServes(t *testing.T) {
 	if f.rec.total() != 1 {
 		t.Fatalf("upstream calls = %d, want 1", f.rec.total())
 	}
-	if !f.health.Healthy("a") {
+	if !f.health.Healthy(healthKey("a"), testHealthPolicy) {
 		t.Fatal("success must mark the egress healthy")
 	}
 }
@@ -200,10 +212,10 @@ func TestExecuteFallsBackOn5xx(t *testing.T) {
 	if f.rec.count("a") != 1 || f.rec.count("b") != 1 {
 		t.Fatalf("calls a=%d b=%d, want 1 each", f.rec.count("a"), f.rec.count("b"))
 	}
-	if f.health.Healthy("a") {
+	if f.health.Healthy(healthKey("a"), testHealthPolicy) {
 		t.Fatal("a's 500 must mark it unhealthy")
 	}
-	if !f.health.Healthy("b") {
+	if !f.health.Healthy(healthKey("b"), testHealthPolicy) {
 		t.Fatal("b's success must mark it healthy")
 	}
 }
@@ -225,15 +237,17 @@ func TestExecute429FallsBackWithoutMarkingHealth(t *testing.T) {
 	if id != "b" || attempts != 2 || class != ClassSuccess {
 		t.Fatalf("id=%q attempts=%d class=%s", id, attempts, class)
 	}
-	if !f.health.Healthy("a") {
+	if !f.health.Healthy(healthKey("a"), testHealthPolicy) {
 		t.Fatal("429 must NOT mark the egress unhealthy")
 	}
 }
 
-// TestExecuteAllUnhealthyReturns502: when every egress fails, Execute
-// returns the terminal error WITHOUT a response — the caller must not have
-// written anything downstream yet, so the 502 envelope is safe.
-func TestExecuteAllUnhealthyReturns502(t *testing.T) {
+// TestExecuteAllUnhealthyReturnsLastRealVerdict: when every egress fails and
+// the plan exhausts BEFORE the budget, the client sees the LAST egress's own
+// verdict — never a synthesized 502 that would rewrite a 429/5xx storm into
+// "no egress" and invert the client's backoff semantics (base.js:163/179
+// parity). The response must still be nil: nothing was written downstream.
+func TestExecuteAllUnhealthyReturnsLastRealVerdict(t *testing.T) {
 	f := newExecutorFixture(t, map[string]int{"a": 500, "b": 500})
 	defer f.Close()
 
@@ -244,14 +258,100 @@ func TestExecuteAllUnhealthyReturns502(t *testing.T) {
 	if resp != nil {
 		t.Fatal("must not return a response when all egresses failed")
 	}
-	if uerr == nil || uerr.Status != http.StatusBadGateway {
-		t.Fatalf("uerr = %+v, want 502", uerr)
+	if uerr == nil || uerr.Status != http.StatusInternalServerError {
+		t.Fatalf("uerr = %+v, want b's real 500 verdict (plan 2 < budget 3)", uerr)
 	}
 	if attempts != 2 || class != ClassUpstream5xx {
 		t.Fatalf("attempts=%d class=%s", attempts, class)
 	}
 	if id != "b" {
 		t.Fatalf("last id = %q, want b", id)
+	}
+}
+
+// Test429ExhaustingPlanStaysA429: the adversarial terminal row — a route of
+// two egresses, both rate-limited, default budget 3. The plan ends first, so
+// the client gets the real 429 (fail-fast backoff), not a fabricated 502
+// (retry-now); with a budget of 2 the same request would return the 429 via
+// the budget guard — the verdict must not depend on that arithmetic.
+func Test429ExhaustingPlanStaysA429(t *testing.T) {
+	f := newExecutorFixture(t, map[string]int{"a": 429, "b": 429})
+	defer f.Close()
+
+	resp, id, attempts, class, uerr := f.exec.Execute(
+		context.Background(), f.servers["a"].URL,
+		func() map[string]string { return map[string]string{} },
+		[]byte(`{}`), f.plan("r", "a", "b"), policy(true, 3))
+	if resp != nil {
+		t.Fatal("must not return a response when every egress 429'd")
+	}
+	if uerr == nil || uerr.Status != http.StatusTooManyRequests {
+		t.Fatalf("uerr = %+v, want the real 429", uerr)
+	}
+	if attempts != 2 || class != ClassUpstream429 || id != "b" {
+		t.Fatalf("attempts=%d class=%s id=%q, want 2/upstream_429/b", attempts, class, id)
+	}
+	if f.rec.count("a") != 1 || f.rec.count("b") != 1 {
+		t.Fatalf("calls a=%d b=%d, want 1 each (429 never retries)", f.rec.count("a"), f.rec.count("b"))
+	}
+}
+
+// TestAllSkippedReturnsSynthetic502: the ONE case the synthetic envelope is
+// for — nothing was ever dialed (every plan entry skipped on a full slot),
+// so there is no real verdict to surface. attempts=0 marks it in the log.
+func TestAllSkippedReturnsSynthetic502(t *testing.T) {
+	f := newExecutorFixture(t, map[string]int{"a": 200, "b": 200})
+	defer f.Close()
+	f.slots.Acquire("a", 1)
+	f.slots.Acquire("b", 1)
+
+	p := AttemptPolicy{
+		FallbackEnabled: true,
+		MaxAttempts:     3,
+		MaxConcurrency:  map[string]int{"a": 1, "b": 1},
+		HealthPolicy:    testHealthPolicy,
+	}
+	resp, id, attempts, _, uerr := f.exec.Execute(
+		context.Background(), f.servers["a"].URL,
+		func() map[string]string { return map[string]string{} },
+		[]byte(`{}`), f.plan("r", "a", "b"), p)
+	if resp != nil {
+		t.Fatal("must not return a response when nothing was dialed")
+	}
+	if uerr == nil || uerr.Status != http.StatusBadGateway || uerr.Message != "none of the eligible egresses could serve the request" {
+		t.Fatalf("uerr = %+v, want the synthetic 502 envelope", uerr)
+	}
+	if attempts != 0 || id != "" {
+		t.Fatalf("attempts=%d id=%q, want 0/empty (nothing dialed)", attempts, id)
+	}
+	if f.rec.total() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", f.rec.total())
+	}
+}
+
+// Test429ChainFallsBackToThirdEgress: the adversarial 429 row — two chained
+// rate limits still fall through to the third egress, and NEITHER 429'd
+// egress is poisoned (the next request may be routed back to either).
+func Test429ChainFallsBackToThirdEgress(t *testing.T) {
+	f := newExecutorFixture(t, map[string]int{"a": 429, "b": 429, "c": 200})
+	defer f.Close()
+
+	resp, id, attempts, class, uerr := f.exec.Execute(
+		context.Background(), f.servers["a"].URL,
+		func() map[string]string { return map[string]string{} },
+		[]byte(`{}`), f.plan("r", "a", "b", "c"), policy(true, 3))
+	if uerr != nil || resp == nil {
+		t.Fatalf("uerr = %v", uerr)
+	}
+	_ = resp.Body.Close()
+	if id != "c" || attempts != 3 || class != ClassSuccess {
+		t.Fatalf("id=%q attempts=%d class=%s, want c/3/success", id, attempts, class)
+	}
+	if f.rec.count("a") != 1 || f.rec.count("b") != 1 || f.rec.count("c") != 1 {
+		t.Fatalf("calls a=%d b=%d c=%d, want 1 each (429s never retry)", f.rec.count("a"), f.rec.count("b"), f.rec.count("c"))
+	}
+	if !f.health.Healthy(healthKey("a"), testHealthPolicy) || !f.health.Healthy(healthKey("b"), testHealthPolicy) {
+		t.Fatal("429s must not mark either egress unhealthy")
 	}
 }
 
@@ -309,6 +409,7 @@ func TestExecuteFullSlotSkippedNotFailed(t *testing.T) {
 		FallbackEnabled: true,
 		MaxAttempts:     3,
 		MaxConcurrency:  map[string]int{"a": 1, "b": 1},
+		HealthPolicy:    testHealthPolicy,
 	}
 	resp, id, _, _, uerr := f.exec.Execute(
 		context.Background(), f.servers["a"].URL,
@@ -324,7 +425,7 @@ func TestExecuteFullSlotSkippedNotFailed(t *testing.T) {
 	if f.rec.count("a") != 0 {
 		t.Fatalf("a must not have been dialed: %d calls", f.rec.count("a"))
 	}
-	if !f.health.Healthy("a") {
+	if !f.health.Healthy(healthKey("a"), testHealthPolicy) {
 		t.Fatal("a must not be marked unhealthy for a skipped dial")
 	}
 }
@@ -389,6 +490,7 @@ func TestExecuteReleasesSlotOnFailure(t *testing.T) {
 		FallbackEnabled: true,
 		MaxAttempts:     1, // terminal 502 on a
 		MaxConcurrency:  map[string]int{"a": 1},
+		HealthPolicy:    testHealthPolicy,
 	}
 	resp, id, _, _, uerr := f.exec.Execute(
 		context.Background(), f.servers["a"].URL,
@@ -414,6 +516,7 @@ func TestExecuteHoldsSlotUntilBodyClosed(t *testing.T) {
 		FallbackEnabled: true,
 		MaxAttempts:     3,
 		MaxConcurrency:  map[string]int{"a": 1},
+		HealthPolicy:    testHealthPolicy,
 	}
 	resp, id, _, _, uerr := f.exec.Execute(
 		context.Background(), f.servers["a"].URL,
