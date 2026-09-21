@@ -1,7 +1,7 @@
 # E2E tests
 
 Black-box tests: the real server binary is compiled, launched as a subprocess
-with an `OFP_CONFIG` document (upstream base + auth keys, against a fake
+with an `OCFP_CONFIG` document (upstream base, against a fake
 OpenCode Zen upstream), and exercised over HTTP like any external client.
 
 They are behind the `e2e` build tag — the default `go test ./...` unit suite
@@ -20,7 +20,7 @@ run.
 
 Covered, end to end through the wire:
 
-- `/healthz`; auth on/off (401 envelope + CORS, no upstream call)
+- `/healthz`
 - chat non-streaming: forced upstream SSE → JSON aggregate (content, usage
   5/2/7, finish reason); upstream sees `stream:true`, `Bearer public`,
   `opencode/*` UA, the fingerprint tool quartet
@@ -40,7 +40,7 @@ Covered, end to end through the wire:
 ### Config snapshot, fallback & shutdown (`reload_test.go`, `shutdown_test.go`)
 
 Each test spawns its OWN server subprocess with bespoke env
-(`OFP_CONFIG`, `OFP_CONFIG_POLL_MS`, `OFP_SHUTDOWN_GRACE`) and real HTTP
+(`OCFP_CONFIG`, `OCFP_CONFIG_POLL_MS`, `OCFP_SHUTDOWN_GRACE`) and real HTTP
 forward proxies per egress — per-egress behavior is observable on the wire
 even though `upstream.base` is a single value:
 
@@ -57,7 +57,7 @@ even though `upstream.base` is a single value:
 - streaming commitment: after the first byte is written, a mid-stream
   upstream death never triggers fallback
 - SIGTERM: new requests answer 503 (drain gate) while the in-flight stream
-  finishes under grace; a stream that stalls past `OFP_SHUTDOWN_GRACE` is
+  finishes under grace; a stream that stalls past `OCFP_SHUTDOWN_GRACE` is
   force-closed
 
 ### Health policy pinning & proxy-auth boundaries (`egress_test.go`)
@@ -123,7 +123,6 @@ unless `E2E_LIVE=1`; spends free-tier quota.
 E2E_LIVE=1 go test -tags e2e ./e2e/ -run TestLive
 # optional:
 #   E2E_BASE_URL=http://127.0.0.1:9000   target proxy
-#   E2E_API_KEY=...                      value of a key in the proxy's auth.keys
 ```
 
 Covers the live model list (free filter holds), one tiny chat completion, and
