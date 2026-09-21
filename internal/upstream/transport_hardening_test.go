@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -345,6 +346,94 @@ func TestConnectStallBoundedByContext(t *testing.T) {
 	}
 }
 
+// TestConnect200WithDeclaredBodyStillTunnels: a proxy that answers the
+// CONNECT with 200 plus a body it DECLARED but never sends
+// (Content-Length: 100) and then tunnels normally. The successful CONNECT
+// reply's body must never be closed or drained: body.Close() io.Copy-drains
+// the declared length (net/http transfer.go body.Close default branch),
+// which would pin the dial until the conn deadline AND swallow the origin's
+// first TLS bytes as "body" — GOROOT dialConn keeps the reply body unclosed
+// for exactly this reason (transport.go:1908-1912). The dial must succeed
+// promptly and the tunnel must carry a real round-trip.
+func TestConnect200WithDeclaredBodyStillTunnels(t *testing.T) {
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: tunneled\n\n")
+	}))
+	defer origin.Close()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				if err := connectRequestHello(c); err != nil {
+					return
+				}
+				// 200 + a declared body that never arrives, then a tunnel.
+				if _, err := c.Write([]byte("HTTP/1.1 200 Connection Established\r\nContent-Length: 100\r\n\r\n")); err != nil {
+					return
+				}
+				up, err := net.Dial("tcp", origin.Listener.Addr().String())
+				if err != nil {
+					return
+				}
+				defer func() { _ = up.Close() }()
+				go func() { _, _ = io.Copy(up, c) }()
+				_, _ = io.Copy(c, up)
+			}(conn)
+		}
+	}()
+
+	u, err := url.Parse("http://" + ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(origin.Certificate())
+	d := newConnectDialer(u, func() *tls.Config { return &tls.Config{RootCAs: pool} })
+
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	done := make(chan dialResult, 1)
+	go func() {
+		conn, err := d.DialTLSContext(context.Background(), "tcp", origin.Listener.Addr().String())
+		done <- dialResult{conn: conn, err: err}
+	}()
+	var res dialResult
+	select {
+	case res = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the dial blocked on the CONNECT reply — the declared body was drained instead of ignored")
+	}
+	if res.err != nil {
+		t.Fatalf("dial through the non-compliant proxy failed: %v", res.err)
+	}
+	defer func() { _ = res.conn.Close() }()
+	// The tunnel carries traffic: a plain GET over the TLS conn comes back
+	// with the origin's SSE.
+	if _, err := res.conn.Write([]byte("GET /zen/v1/chat/completions HTTP/1.1\r\nHost: " + origin.Listener.Addr().String() + "\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatalf("write over the tunnel: %v", err)
+	}
+	raw, err := io.ReadAll(res.conn)
+	if err != nil {
+		t.Fatalf("read over the tunnel: %v", err)
+	}
+	if !strings.Contains(string(raw), "data: tunneled") {
+		t.Fatalf("tunneled body = %q, want the origin's SSE chunk", raw)
+	}
+}
+
 // ---- Credential hygiene ----
 
 // sekritUser/sekritPass are the fake credentials every row of the hygiene
@@ -554,5 +643,79 @@ func TestTerminalErrorBodyReadIsBounded(t *testing.T) {
 	}
 	if !strings.HasPrefix(uerr.Message, strings.Repeat("x", 4096)) {
 		t.Fatalf("message is not the truncated raw body: %.80q", uerr.Message)
+	}
+}
+
+// TestAllTransportsCarryIdleConnTimeout is the structural pin for
+// config.IdleConnTimeout: EVERY transport this package builds must carry it.
+// net/http registers no finalizer for pooled conns, so a conn that was busy
+// when a generation prune called CloseIdleConnections returns to the idle
+// pool and lives forever unless the transport's own idle timer reaps it (see
+// config.IdleConnTimeout). A transport added without the field regresses that
+// leak; this fails first.
+func TestAllTransportsCarryIdleConnTimeout(t *testing.T) {
+	check := func(c *Client, which string) {
+		t.Helper()
+		for label, hc := range map[string]*http.Client{"HTTP": c.HTTP, "tunneled": c.tunneled} {
+			if hc == nil {
+				continue
+			}
+			tr, ok := hc.Transport.(*http.Transport)
+			if !ok {
+				t.Fatalf("%s %s: transport is %T, want *http.Transport", which, label, hc.Transport)
+			}
+			if tr.IdleConnTimeout != config.IdleConnTimeout {
+				t.Errorf("%s %s: IdleConnTimeout = %v, want %v", which, label, tr.IdleConnTimeout, config.IdleConnTimeout)
+			}
+		}
+	}
+	check(NewClient(), "NewClient")
+	check(noSleepClient(NewClientFor(nil)), "NewClientFor(direct)")
+	check(noSleepClient(NewClientFor(&config.Proxy{Type: config.ProxyHTTP, URL: "http://127.0.0.1:9"})), "NewClientFor(http)")
+	check(noSleepClient(NewClientFor(&config.Proxy{Type: config.ProxyHTTPS, URL: "https://127.0.0.1:9"})), "NewClientFor(https)")
+	check(noSleepClient(NewClientFor(&config.Proxy{Type: config.ProxySOCKS5, URL: "socks5://127.0.0.1:9"})), "NewClientFor(socks5)")
+}
+
+// TestDirectPathsBoundDialAndTLS is the structural pin for
+// config.DialTimeout / config.TLSHandshakeTimeout: every transport that
+// dials or handshakes ITSELF must carry both bounds — before them, only
+// ResponseHeaderTimeout was set, so a blackholed dial or origin TLS
+// handshake hung with no phase bound at all (the JS fetch bounds all phases
+// with one abort signal; see the constants' doc). A behavioral blackhole
+// test would need the full 60 s budget per phase, so the pin is structural.
+//
+// The tunneled CONNECT transport is the deliberate exception: its
+// DialTLSContext owns dial + CONNECT + origin TLS under one conn deadline
+// (connect.go), so it must carry DialTLSContext and neither stdlib dial
+// field.
+func TestDirectPathsBoundDialAndTLS(t *testing.T) {
+	selfDialing := func(c *Client, which string) {
+		t.Helper()
+		tr, ok := c.HTTP.Transport.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s: transport is %T, want *http.Transport", which, c.HTTP.Transport)
+		}
+		if tr.DialContext == nil {
+			t.Errorf("%s: DialContext is nil — the TCP dial is unbounded", which)
+		}
+		if tr.TLSHandshakeTimeout != config.TLSHandshakeTimeout {
+			t.Errorf("%s: TLSHandshakeTimeout = %v, want %v", which, tr.TLSHandshakeTimeout, config.TLSHandshakeTimeout)
+		}
+	}
+	selfDialing(NewClient(), "NewClient")
+	selfDialing(noSleepClient(NewClientFor(nil)), "NewClientFor(direct)")
+	selfDialing(noSleepClient(NewClientFor(&config.Proxy{Type: config.ProxyHTTP, URL: "http://127.0.0.1:9"})), "NewClientFor(http)")
+	selfDialing(noSleepClient(NewClientFor(&config.Proxy{Type: config.ProxySOCKS5, URL: "socks5://127.0.0.1:9"})), "NewClientFor(socks5)")
+
+	c := noSleepClient(NewClientFor(&config.Proxy{Type: config.ProxyHTTP, URL: "http://127.0.0.1:9"}))
+	tr, ok := c.tunneled.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("tunneled: transport is %T, want *http.Transport", c.tunneled.Transport)
+	}
+	if tr.DialTLSContext == nil {
+		t.Error("tunneled: DialTLSContext is nil — the CONNECT boundary (connect.go) must own the dial")
+	}
+	if tr.DialContext != nil || tr.TLSHandshakeTimeout != 0 {
+		t.Errorf("tunneled: carries stdlib dial fields (DialContext=%v TLSHandshakeTimeout=%v); DialTLSContext makes them dead config", tr.DialContext != nil, tr.TLSHandshakeTimeout)
 	}
 }

@@ -109,6 +109,26 @@ const (
 	StreamStall    = 360 * time.Second // max gap between SSE chunks
 	DefaultRatio   = 0.75              // hidden-thinking synthesis share
 	SynthMaxOutput = 10                // below this output, no synthesis
+
+	// DialTimeout and TLSHandshakeTimeout bound the two transport phases
+	// ResponseHeaderTimeout cannot reach on the DIRECT paths. The JS router
+	// needs neither as a separate knob: base.js:133-138 arms ONE
+	// AbortController over FETCH_CONNECT_TIMEOUT_MS (runtimeConfig.js:58,
+	// 60 s) around the whole fetch and merges it with the caller's signal
+	// (AbortSignal.any), so DNS + dial + TLS + request + response headers
+	// share a single 60 s budget that aborts the fetch wherever it happens
+	// to be. Go's transport splits those phases across three independent
+	// fields, so the port approximates the single budget per phase: each
+	// phase gets the same 60 s, and each phase's expiry reaches the fetch
+	// as a transport error that classifies ClassTimeout like the JS abort
+	// (base.js:169-178 network-exception branch). Worst case one attempt
+	// spends ~3x the JS budget (dial + TLS + headers); a blackholed
+	// upstream fails at the FIRST phase, so real blackhole latency stays
+	// ~60 s + DNS. The tunneled CONNECT transport (connect.go) needs
+	// neither: its DialTLSContext bounds dial + CONNECT + origin TLS under
+	// one conn deadline already.
+	DialTimeout         = 60 * time.Second
+	TLSHandshakeTimeout = 60 * time.Second
 )
 
 // Retry matrix per upstream status: attempts/delay (default executor rules —
@@ -124,6 +144,39 @@ var RetryRules = map[int]RetryRule{
 	503: {Attempts: 3, Delay: 2 * time.Second},
 	504: {Attempts: 2, Delay: 3 * time.Second},
 }
+
+// MaxRedirects is how many redirects ONE upstream attempt follows before
+// giving up with a network-class error (which then rides the normal 502
+// retry rule, exactly like any other fetch exception in base.js:173-178).
+// The JS router's fetch is undici under a ProxyAgent dispatcher
+// (utils/proxyFetch.js getDispatcher → originalFetch(url, {dispatcher})),
+// and undici caps the chain at twenty: `if (request.redirectCount === 20)
+// return … makeNetworkError('redirect count exceeded')` —
+// node_modules/undici/lib/web/fetch/index.js:1250-1255 (the WHATWG fetch
+// algorithm). net/http's own default checkRedirect cap is 10, which would
+// NOT be parity — an upstream legitimately redirecting 11-20 times succeeds
+// in the JS router and must succeed here.
+const MaxRedirects = 20
+
+// IdleConnTimeout closes a pooled upstream conn after this much idle time,
+// on EVERY transport this process builds. Two reasons, one parity and one
+// hardening:
+//
+//   - Parity: the JS router's fetches run on undici dispatchers whose
+//     keepAliveTimeout default is 4 s (node_modules/undici/lib/dispatcher/
+//     client.js:252 `keepAliveTimeout == null ? 4e3 : keepAliveTimeout`;
+//     utils/proxyFetch.js getDispatcher builds its ProxyAgent without
+//     overriding it, and Node's global dispatcher carries the same client
+//     defaults), so idle keep-alive conns are dropped after 4 s in the JS
+//     router too.
+//   - Hardening: net/http registers NO finalizer for pooled conns. A conn
+//     still busy when a generation prune calls CloseIdleConnections returns
+//     to the idle pool afterwards and, without an idle timeout, sits there
+//     forever — pinning its fd and readLoop goroutine for the life of the
+//     process. The transport arms an idle timer whenever a conn re-enters
+//     the pool (net/http tryPutIdleConn), so this is the only backstop that
+//     reaches conns that outlive their client.
+const IdleConnTimeout = 4 * time.Second
 
 // Server defaults.
 const (

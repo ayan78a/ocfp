@@ -32,21 +32,21 @@ import (
 // proxy — the pairing is validated at config load (issue #8). The proxy URL
 // itself is never logged; errors carry the redacted form.
 //
-// Redirects: both http.Clients below (and Client.HTTP from NewClient) leave
-// CheckRedirect unset, so http.Client follows up to 10 redirects — faithful
-// parity with the JS source, which passes no `redirect:` option in the
-// executor path (base.js:144-149 → utils/proxyFetch.js:203-257 forwards the
-// options to native fetch, default `redirect: "follow"`; the lone
-// redirect:"manual" lives in translator/concerns/image.js:97-98, a different
-// boundary). Accepted consequence: a 307/308 re-POSTs the body — including
-// `Authorization: Bearer public` and the x-opencode-* headers — to the
-// redirect target, exactly as the JS router would (pinned by
-// TestRedirectFollowedLikeJSFetch).
+// Redirects: the returned client sets followRedirects — attempt walks the
+// chain itself and re-picks the scheme-appropriate transport per hop, so a
+// cross-scheme redirect can never leave the egress (https→http would
+// otherwise dial DIRECT off the tunneled transport, http→https would put
+// STDLIB on the CONNECT with an untyped 407). See the Client doc in
+// client.go for the full rationale and the undici citations; the JS router
+// stays on its ProxyAgent for every hop the same way.
 func NewClientFor(p *config.Proxy) (*Client, error) {
-	c := &Client{Sleep: time.Sleep, Now: time.Now}
+	c := &Client{Sleep: time.Sleep, Now: time.Now, followRedirects: true}
 	if p == nil {
 		tr := &http.Transport{
 			ResponseHeaderTimeout: config.ConnectTimeout,
+			IdleConnTimeout:       config.IdleConnTimeout,
+			DialContext:           (&net.Dialer{Timeout: config.DialTimeout}).DialContext,
+			TLSHandshakeTimeout:   config.TLSHandshakeTimeout,
 			ForceAttemptHTTP2:     true,
 		}
 		c.HTTP = &http.Client{Transport: tr}
@@ -66,25 +66,44 @@ func NewClientFor(p *config.Proxy) (*Client, error) {
 	}
 	switch p.Type {
 	case config.ProxyHTTP, config.ProxyHTTPS:
-		// The http-origin transport: Go proxies it in absolute form.
+		// The http-origin transport: Go proxies it in absolute form. The
+		// dialer bounds the TCP dial TO THE PROXY (stdlib otherwise dials
+		// with its unbounded zeroDialer) and TLSHandshakeTimeout the TLS
+		// hop when the proxy endpoint is itself https.
 		viaProxy := &http.Transport{
 			ResponseHeaderTimeout: config.ConnectTimeout,
+			IdleConnTimeout:       config.IdleConnTimeout,
+			DialContext:           (&net.Dialer{Timeout: config.DialTimeout}).DialContext,
+			TLSHandshakeTimeout:   config.TLSHandshakeTimeout,
 			ForceAttemptHTTP2:     true,
 			Proxy:                 http.ProxyURL(u),
 		}
 		// The https-origin transport: WE own the CONNECT (connect.go); the
 		// transport sees a direct https dial. The proxy URL rides the
-		// dialer closure, not the transport.
+		// dialer closure, not the transport. Deliberately NO DialContext
+		// and NO TLSHandshakeTimeout here: this transport never dials or
+		// handshakes itself — DialTLSContext does both (dial to proxy +
+		// CONNECT + origin TLS) under the single conn deadline connect.go
+		// arms, and an extra dialer on this transport could never fire.
 		tunneled := &http.Transport{
 			ResponseHeaderTimeout: config.ConnectTimeout,
+			IdleConnTimeout:       config.IdleConnTimeout,
 			ForceAttemptHTTP2:     true,
 			DialTLSContext:        newConnectDialer(u, func() *tls.Config { return c.TLSConfig }).DialTLSContext,
 		}
 		c.HTTP = &http.Client{Transport: viaProxy}
 		c.tunneled = &http.Client{Transport: tunneled}
 	case config.ProxySOCKS5:
+		// The socks5 dialer bounds its own TCP dial + SOCKS handshake under
+		// one conn deadline (socks5.go); TLSHandshakeTimeout here bounds the
+		// ORIGIN TLS handshake the transport performs on the returned conn —
+		// before this, an https origin whose tunnel came up but whose TLS
+		// handshake blackholed hung with no bound at all (only
+		// ResponseHeaderTimeout was set, and it starts after the handshake).
 		tr := &http.Transport{
 			ResponseHeaderTimeout: config.ConnectTimeout,
+			IdleConnTimeout:       config.IdleConnTimeout,
+			TLSHandshakeTimeout:   config.TLSHandshakeTimeout,
 			ForceAttemptHTTP2:     true,
 			DialContext:           newSocks5Dialer(u).DialContext,
 		}
