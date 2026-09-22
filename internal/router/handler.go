@@ -339,8 +339,17 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, sourceFormat rela
 
 	reqID := newRequestID()
 	start := time.Now()
-	resp, egID, attempts, class, uerr := s.Exec.Execute(reqCtx, url, buildHeaders, bodyJSON, plan, policy)
+	// Evidence wiring: the recorder collects rows inside the executor/client
+	// boundaries; the renderer adds the request-scoped facts only known here
+	// (correlation ids, model/endpoint, session pseudonym, body hash) and is
+	// the single emit point. Emission happens right after Execute, when every
+	// row's decisions are complete and before the completion line.
+	rec := upstream.NewRecorder()
+	ev := newEvidenceLog(s.log, rec, reqID, rt.Generation, plan.RouteID, cleanModel,
+		profile.Endpoint, clientRequestedStreaming, session, url, policy.Budget(), len(bodyJSON), bodyJSON)
+	resp, egID, attempts, class, uerr := s.Exec.ExecuteObserved(reqCtx, url, buildHeaders, bodyJSON, plan, policy, rec)
 	latency := time.Since(start)
+	ev.Emit()
 	// Completion is one event per request at Info: the black-box e2e suite
 	// and the snapshot tests assert the outcome facts (generation, egress,
 	// attempts, fallback) on the default info level, so Debug would hide
@@ -375,10 +384,10 @@ func (s *Server) relay(w http.ResponseWriter, r *http.Request, sourceFormat rela
 		// ReadAll would abort it. forcedSSEToJson closes the body; the defer
 		// releases the context after the read completes.
 		defer cancelUpstream()
-		s.forcedSSEToJson(w, r, resp, sourceFormat, targetFormat, cleanModel, customToolNames, body, upstreamModel, intent)
+		s.forcedSSEToJson(w, r, resp, ev, egID, sourceFormat, targetFormat, cleanModel, customToolNames, body, upstreamModel, intent)
 		return
 	}
-	s.stream(w, r, resp, cancelUpstream, sourceFormat, targetFormat, body, upstreamModel, customToolNames, intent)
+	s.stream(w, r, resp, cancelUpstream, ev, egID, sourceFormat, targetFormat, body, upstreamModel, customToolNames, intent)
 }
 
 // captureDownstream collects the client headers the executor forwards.
